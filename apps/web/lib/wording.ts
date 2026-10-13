@@ -186,6 +186,30 @@ export const SUBTITLES = {
 } as const;
 
 /**
+ * The two sentences of the checks of decision D-94, said under the box of
+ * steps, always in sight (decision D-85), when the page stops checking
+ * whether the data has arrived.
+ *
+ * `signedOut` is said when a check answered 401: the sign-in cookie lasts
+ * about one hour and is never renewed (api.md, "Principles"), and the longest
+ * history takes about 1 h 35 (decision D-79), so a long install outlives its
+ * sign-in. The page stays the end of the install and says the one thing that
+ * helps. The words `WATCH_SIGN_IN_LINK` are a link to the sign-in, which
+ * comes back to this same address.
+ *
+ * `stopped` is said after two hours of checking, and after any refusal that
+ * is about the visitor or their project (403, 404). A reload is the way to
+ * see where the run stands then.
+ */
+export const WATCH = {
+  signedOut: "Sign in again to see whether your data has arrived.",
+  stopped: "This page has stopped checking. Reload it to see whether your data has arrived.",
+} as const;
+
+/** The words of `WATCH.signedOut` that are the link to the sign-in (decision D-94). */
+export const WATCH_SIGN_IN_LINK = "Sign in again";
+
+/**
  * The sentence that starts the install. A visitor sees one wording, "Install it now" (decision D-65). The two
  * others stay reachable by the `v` of the address, which the browser checks use to fix a wording.
  */
@@ -214,7 +238,9 @@ export function installWording(variant: number | null): string {
  * 1m18s to 2m34s across the four executions of that day: a middle value, not
  * a floor.
  */
-const historyMinutes = (days: number) => (133 + 2.45 * days) / 60;
+const START_SECONDS = 133;
+const PER_DAY_SECONDS = 2.45;
+const historyMinutes = (days: number) => (START_SECONDS + PER_DAY_SECONDS * days) / 60;
 
 /**
  * The minutes of the steps that come before the run that fills the dataset:
@@ -241,7 +267,12 @@ const SETUP_MINUTES = 1;
  * time.
  */
 export function estimate(days: number, extraMinutes = 0): string {
-  const m = Math.round(historyMinutes(days) + extraMinutes);
+  return inWords(historyMinutes(days) + extraMinutes);
+}
+
+/** A number of minutes in words. Under an hour, minutes; above, hours and minutes rounded to five minutes. */
+function inWords(minutes: number): string {
+  const m = Math.round(minutes);
   if (m <= 1) return "about 1 minute";
   if (m < 60) return `about ${m} minutes`;
   const rounded = Math.round(m / 5) * 5;
@@ -249,6 +280,32 @@ export function estimate(days: number, extraMinutes = 0): string {
   const rest = rounded % 60;
   const hours = h === 1 ? "1 hour" : `${h} hours`;
   return rest === 0 ? `about ${hours}` : `about ${hours} ${rest} minutes`;
+}
+
+/**
+ * How long the run that fills the dataset still has, in words (decision
+ * D-94). `written` is the number of day tables the dataset holds, which
+ * `GET /api/install/status` reports as `tables.count`; every check of the
+ * install page passes it the latest count, so the time goes down as the
+ * tables arrive, and a reload during the run promises what is left rather
+ * than the whole run again.
+ *
+ * The pace is the one of `estimate`: about 2.45 seconds a day. The 133
+ * seconds Cloud Run takes to make the instance ready are counted only while
+ * no table has landed yet, because a table that exists proves the instance
+ * is running. So with no table the answer is `estimate(days)` itself, the
+ * figure of decision D-90.
+ *
+ * It never reads zero or less. When the days asked for are all there and the
+ * run has not reported success, the estimate has run out and the answer says
+ * only that the end is near. The count is the whole dataset, so a dataset
+ * that kept the days of an earlier install reaches that case early; too
+ * short is the honest answer there, since those days are there.
+ */
+export function timeLeft(days: number, written: number): string {
+  const left = days - Math.max(0, written);
+  if (left <= 0) return "a few minutes";
+  return inWords((written > 0 ? 0 : START_SECONDS) / 60 + (PER_DAY_SECONDS * left) / 60);
 }
 
 /**
@@ -288,26 +345,28 @@ export type RunState = "starting" | "running" | "filled" | "stopped";
  * The words of that line. While the run is going the line promises a
  * duration: the pace of `estimate` for the days of history, **without** the
  * setup minute, because the steps before the run are done. So 221 days read
- * "about 11 minutes", and a long history reads in hours, the same calculation
- * as the two period screens.
+ * "about 11 minutes" before the first table lands, and a long history reads
+ * in hours, the same calculation as the two period screens.
  *
  * `days` is null for an install this tab did not ask for whose status carries
  * no `historyDays`: there is no duration to promise, so the line says only
  * that the dataset is being filled.
  *
- * The page reads the project once and does not follow the run (decision D-52,
- * option b), so this line does not change while the visitor watches. On a
- * reload during the run the duration is counted again from the start, so it
- * overshoots; that is the safe side and is accepted (decision D-90).
+ * `written` is how many day tables the dataset holds, and the duration is
+ * what is left of the run (decision D-94, `timeLeft` above). The page asks
+ * the backend the same question every 30 seconds while the run is going, so
+ * that duration goes down as the tables arrive; the words around it do not
+ * change. Until decision D-94 the page read the project once (decision D-52,
+ * option b) and this line never changed while the visitor watched.
  */
-export function runLine(state: RunState, days: number | null): string {
+export function runLine(state: RunState, days: number | null, written = 0): string {
   switch (state) {
     case "starting":
       return "Starting the Cloud Run job";
     case "running":
       return days === null
         ? "Cloud Run job is running. Your dataset is being filled."
-        : `Cloud Run job is running. Your dataset will be filled in ${estimate(days)}.`;
+        : `Cloud Run job is running. Your dataset will be filled in ${timeLeft(days, written)}.`;
     case "filled":
       return "Cloud Run job has finished. Your dataset is filled.";
     case "stopped":

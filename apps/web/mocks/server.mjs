@@ -49,6 +49,12 @@
 //                        with the hint that names the address
 //   failing-run-project  run-backfill, the last step, answers 502 once, then works:
 //                        the start of the run that fills the dataset failed
+//   stopping-run-project the run that fills the dataset starts, writes about four
+//                        tables in ten of the days asked for, and stops:
+//                        `backfill.state` becomes "failed" and the tables it wrote
+//                        stay. Every run of this project stops that way, so the
+//                        switch from running to stopped can be seen again with
+//                        "Try again" (decision D-94)
 //   leftover-project     holds a labelled, empty dataset and no job: what an
 //                        install that stopped early leaves behind
 //   taken-name-project   the first dataset name asked for is taken: a dataset of
@@ -199,6 +205,7 @@ const PROJECTS = [
   { projectId: "flaky-project", displayName: "Project where a step fails once (mock)" },
   { projectId: "slow-account-project", displayName: "Project where Google is slow (mock)" },
   { projectId: "failing-run-project", displayName: "Project where the last step fails once (mock)" },
+  { projectId: "stopping-run-project", displayName: "Project where the run stops part way (mock)" },
   { projectId: "rejected-project", displayName: "Project where Google rejects a request (mock)" },
   { projectId: "no-image-project", displayName: "Project that meets a fault on our side (mock)" },
   { projectId: "leftover-project", displayName: "Project with a leftover dataset (mock)" },
@@ -461,6 +468,7 @@ function getInstall(projectId, datasetId) {
       serviceAccount: preinstalled || lost,
       // { startedAt, historyDays }; a run that started long ago has finished.
       // `failed` is a run that stopped with an error: the daily run of a job whose dataset is gone.
+      // `stopAfter` is a run that stops once it has written that many tables (stopping-run-project).
       backfill: preinstalled ? { startedAt: 0, historyDays: 90 } : lost ? { startedAt: 0, historyDays: 3, failed: true } : null,
       // The days the dataset held before the latest run, as a range { first, last }: what
       // earlier runs wrote, and what an uninstall that keeps the dataset leaves behind.
@@ -839,11 +847,29 @@ function apisOn(projectId) {
   return false;
 }
 
-/** How many events_ tables the latest run of the job has written so far. */
+/**
+ * How many events_ tables the latest run of the job has written so far. A run
+ * that stops part way (`stopAfter`, stopping-run-project) writes no more than
+ * the tables it got to, and those stay in the dataset: it is the run that
+ * stops, not the dataset that empties.
+ */
 function tablesFromRun(inst) {
   if (!inst.backfill || inst.backfill.failed) return 0;
   const elapsed = Date.now() - inst.backfill.startedAt;
-  return Math.min(inst.backfill.historyDays, Math.floor(elapsed / (DELAY.perTable * SPEED)));
+  const most = inst.backfill.stopAfter ?? inst.backfill.historyDays;
+  return Math.min(most, inst.backfill.historyDays, Math.floor(elapsed / (DELAY.perTable * SPEED)));
+}
+
+/** True once a run that stops part way has written the tables it was going to write (stopping-run-project). */
+function stoppedPartWay(inst) {
+  const stop = inst?.backfill?.stopAfter;
+  if (typeof stop !== "number") return false;
+  return Math.floor((Date.now() - inst.backfill.startedAt) / (DELAY.perTable * SPEED)) >= stop;
+}
+
+/** The latest run of the job reports an error: it failed outright, or it stopped part way. */
+function runFailed(inst) {
+  return !!inst?.backfill && (inst.backfill.failed || stoppedPartWay(inst));
 }
 
 /**
@@ -878,7 +904,7 @@ function deriveStatus(inst, spec) {
   let backfill = { state: "none" };
   let tables = { count: 0, first: null, last: null };
   if (inst.backfill) {
-    backfill = { state: inst.backfill.failed ? "failed" : tablesFromRun(inst) >= inst.backfill.historyDays ? "succeeded" : "running" };
+    backfill = { state: runFailed(inst) ? "failed" : tablesFromRun(inst) >= inst.backfill.historyDays ? "succeeded" : "running" };
   }
   const held = daysHeld(inst);
   if (held) {
@@ -887,7 +913,7 @@ function deriveStatus(inst, spec) {
   }
   // What the project says of the period: the arguments of the latest run, for an install
   // without the daily refresh. With it the latest run is a daily one, and says nothing (api.md v1.16).
-  const history = job && !refreshOfJob(job) && inst.backfill && !inst.backfill.failed ? inst.backfill : null;
+  const history = job && !refreshOfJob(job) && inst.backfill && !runFailed(inst) ? inst.backfill : null;
   return {
     apisEnabled: inst.apisEnabledAt !== null && inst.apisEnabledAt <= now ? "done" : "missing",
     dataset: inst.dataset ? "done" : "missing",
@@ -1041,7 +1067,7 @@ async function handleStep(req, res, step) {
         );
       }
       // A history that still runs is not started twice, and the request is not judged then.
-      if (inst.backfill && !inst.backfill.failed && tablesFromRun(inst) < inst.backfill.historyDays) return send(res, 200, { step, state: "done" });
+      if (inst.backfill && !runFailed(inst) && tablesFromRun(inst) < inst.backfill.historyDays) return send(res, 200, { step, state: "done" });
       {
         // No hole by a second history (api.md v1.16, API-24): the period asked touches or overlaps the days held.
         const end = spec.historyEnd ? dayOf(spec.historyEnd) : today() - 1;
@@ -1057,7 +1083,11 @@ async function handleStep(req, res, step) {
         }
         // What the dataset holds stays; the new run adds its days.
         inst.kept = held;
-        inst.backfill = { startedAt: Date.now(), historyDays: spec.historyDays, historyEnd: spec.historyEnd ?? null, end };
+        // The run of stopping-run-project stops part way, after about four tables in ten (decision
+        // D-94): long enough for a check to see it running first, and never the whole history.
+        const stopAfter =
+          spec.projectId === "stopping-run-project" ? Math.max(0, Math.min(Math.ceil(spec.historyDays * 0.4), spec.historyDays - 1)) : null;
+        inst.backfill = { startedAt: Date.now(), historyDays: spec.historyDays, historyEnd: spec.historyEnd ?? null, end, stopAfter };
       }
       return send(res, 200, { step, state: "done" });
   }
@@ -1333,7 +1363,7 @@ async function handlePreflight(req, res, config) {
 
 /** `historyDays` and `historyEnd` as the status reports them (api.md v1.16). */
 function periodOf(job, inst) {
-  const history = job && !refreshOfJob(job) && inst?.backfill && !inst.backfill.failed ? inst.backfill : null;
+  const history = job && !refreshOfJob(job) && inst?.backfill && !runFailed(inst) ? inst.backfill : null;
   return { historyDays: history ? history.historyDays : null, historyEnd: history ? (history.historyEnd ?? null) : null };
 }
 

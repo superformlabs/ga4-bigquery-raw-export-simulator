@@ -1010,6 +1010,11 @@ ul.checks .detail:empty {
   margin: 24px auto 0;
   max-width: 560px;
 }
+/* A link in a line of advice, such as the sign-in of decision D-94: the colour of the words
+   around it, underlined as the browser draws it, like the links inside `.fix`. */
+.advice > a {
+  color: var(--ink);
+}
 
 .spin {
   display: inline-block;

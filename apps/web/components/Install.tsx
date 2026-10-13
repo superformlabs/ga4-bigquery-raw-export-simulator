@@ -21,7 +21,7 @@ import {
 } from "@/lib/install";
 import { bigQueryUrl } from "@/lib/links";
 import { useSession } from "@/lib/session";
-import { SUBTITLES, SUPPORT_EMAIL, installWording, partsOf, plural, runLine, type RunState } from "@/lib/wording";
+import { SUBTITLES, SUPPORT_EMAIL, WATCH, WATCH_SIGN_IN_LINK, installWording, partsOf, plural, runLine, type RunState } from "@/lib/wording";
 import Mailed from "./Mailed";
 import { dropWish, holdsWish, keepWish } from "@/lib/wish";
 import CheckList, { type Line, type LineState } from "./CheckList";
@@ -38,6 +38,12 @@ const STEP_POLL_MS = 3000;
 const NAME_TRIES = 3;
 // Long enough to see the last tick before the page changes.
 const LAST_TICK_MS = 650;
+// How often the end of the install asks whether the data has arrived (decision D-94). Slower
+// than the steps by ten times: the run takes minutes, and nobody watches a line to the second.
+const WATCH_MS = 30_000;
+// How long the page keeps asking, counted from its first check, time hidden included (decision
+// D-94). The longest history takes about 1 h 35 (decision D-79), so two hours covers every run.
+const WATCH_FOR_MS = 2 * 60 * 60 * 1000;
 
 type Phase =
   // The page came from a link. It reads the project before it shows anything.
@@ -57,10 +63,22 @@ type Phase =
   // looked at for a moment (`unread`). No step failed, so no line turns red (task UI-19).
   | { kind: "paused"; step: number; error: ApiRequestError; unread?: boolean }
   // Everything is in place. The installing page stays and becomes the last page (decision D-76): the title and
-  // the subtitle become those of the end, the list keeps its ticks, and the way out appears under it.
+  // the subtitle become those of the end, the list keeps its ticks, and the way out appears under it. While the
+  // run that fills the dataset is going, this is the one phase that keeps asking the backend (decision D-94).
   | { kind: "done" }
   // Not reached while the uninstall is switched off (lib/features.ts, decision D-30).
   | { kind: "uninstalled"; result: UninstallDone };
+
+/**
+ * Why the end of the install stopped asking whether the data has arrived
+ * (decision D-94), when it stopped for a reason the visitor has to know.
+ * Null while it is still asking, and after it stopped because the run
+ * answered: the list says that itself.
+ *
+ *   signed-out  a check answered 401: the sign-in has ended
+ *   stopped     two hours of checking, or a refusal about the visitor or their project
+ */
+type WatchEnd = "signed-out" | "stopped";
 
 const sleep = (ms: number) => new Promise((r) => setTimeout(r, ms));
 const asSentence = (s: string) => (/[.!?]$/.test(s.trim()) ? s.trim() : `${s.trim()}.`);
@@ -127,6 +145,14 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
   // True when this page has just started the run that fills the dataset: the data is still arriving, which
   // the last line of the list says (decision D-90).
   const [started, setStarted] = useState(false);
+  // Why the page stopped asking whether the data has arrived (decision D-94). Null while it asks, and
+  // null when it stopped because the run answered: the last line of the list says that by itself.
+  const [watchEnd, setWatchEnd] = useState<WatchEnd | null>(null);
+  // How many day tables the latest of those checks found (`tables.count`, api.md v2.0), for the time
+  // the running line still promises (decision D-94). Null until a check has answered: the page then
+  // counts on the one reading it already has. A check that says nothing conclusive sets this and
+  // nothing else, so that the line keeps its last known state when the checks stop.
+  const [written, setWritten] = useState<number | null>(null);
   const run = useRef(0);
   // Dataset names the backend refused in this install. None of them is sent again.
   const refused = useRef<string[]>([]);
@@ -158,6 +184,9 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
   async function steps(mine: number, from: number) {
     const stale = () => run.current !== mine;
     const s = work.current.spec;
+    // A new attempt starts with nothing said about the checks of the attempt before it (decision D-94).
+    setWatchEnd(null);
+    setWritten(null);
     // Without the daily refresh the schedule is no step of the install (decision D-31).
     const list = stepsOf(s);
     let i = from;
@@ -208,10 +237,12 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
         }
       }
       // The last step has answered: the page moves to the last page. The run
-      // goes on in the visitor's project, and the page does not follow it
-      // (decision D-52, option b). It reads the status once, to say what is
-      // true; since decision D-90 the last line of the list says where the
-      // run stands, from that one reading.
+      // goes on in the visitor's project. It reads the status once here, to
+      // say what is true; since decision D-90 the last line of the list says
+      // where the run stands, and since decision D-94 the page follows that
+      // run from the `done` phase, asking the same question every 30 seconds
+      // until the data has arrived (`watch` below). Until D-94 this one
+      // reading was the last (decision D-52, option b).
       try {
         current = await getInstallStatus(s);
         if (stale()) return;
@@ -288,6 +319,9 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
     const stale = () => run.current !== mine;
     // The check runs again from here, so its line goes back to waiting.
     checked.current = false;
+    // And nothing is said about the checks of an attempt before this one (decision D-94).
+    setWatchEnd(null);
+    setWritten(null);
     if (how === "open") mayWrite.current = holdsWish(work.current.key, work.current.spec);
     if (how === "wish") ask();
     if (how !== "open") setPhase(mayWrite.current ? { kind: "checking" } : { kind: "looking" });
@@ -309,8 +343,8 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
         if (stale()) return;
         setStatus(current);
         // Where an install that is in place leads. The one place that decides it. While its data is
-        // still arriving the last line of the list says so (decision D-90); the page reads the project
-        // once and does not follow the run (decision D-52, option b).
+        // still arriving the last line of the list says so (decision D-90), and the `done` phase then
+        // asks the same question every 30 seconds until it has arrived (decision D-94, `watch` below).
         // `isInPlace` does not read the run, so each way out below reads it. With no run yet
         // (`backfill.state` is "none") none of the three matches, and the steps go on to `run-backfill`.
         if (isInPlace(current, s)) {
@@ -428,6 +462,122 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
     (phase.kind === "failed" && phase.error.code === "CONFLICT" && phase.error.taken.length === 0) ||
     (phase.kind === "blocked" && phase.problems.some((c) => c.id === "dataset"));
 
+  // How many days of history the line that fills the dataset promises. Those this tab asked for, or those
+  // the project says the install was asked for (api.md v1.16); null when neither is known, which is an
+  // install this tab did not ask for whose status carries no `historyDays`.
+  const days = mayWrite.current ? spec.historyDays : typeof status?.historyDays === "number" ? status.historyDays : null;
+
+  // ---------- The page follows the run that fills the dataset (decision D-94) ----------
+  // The end of the install, while the run is going: the page asks the backend the same question every
+  // 30 seconds, so that the last line switches to "Your dataset is filled." by itself, with its green
+  // tick, and the time it promises goes down as the tables arrive. Until decision D-94 the page read
+  // the project once (decision D-52, option b) and the line stayed as it was until a reload.
+  //
+  // This is the only state that asks. Not "Ready to install", not "Install not complete", not a page
+  // that failed or is paused, and not while the steps run: they keep `STEP_POLL_MS`. The run is going
+  // when the project says so, or when this tab has just started it (`started`), which is the same test
+  // the last line of the list uses below.
+  const watchable = phase.kind === "done" && status?.backfill.state !== "failed" && (started || status?.backfill.state === "running");
+
+  useEffect(() => {
+    if (!watchable || watchEnd) return;
+    // An answer that arrives after the page has moved on changes nothing, as for the steps.
+    const mine = run.current;
+    const bornAt = Date.now();
+    let timer: ReturnType<typeof setTimeout> | null = null;
+    // Never two checks at once, and nothing more once the checks are over.
+    let asking = false;
+    let over = false;
+    // When the last check was made, and when the first one was: the two hours are counted from the first.
+    let lastAt = 0;
+    let firstAt = 0;
+
+    const clear = () => {
+      if (timer !== null) clearTimeout(timer);
+      timer = null;
+    };
+    /** No more checks. `end` is the reason the visitor is told, or null when the list says it. */
+    const stop = (end: WatchEnd | null) => {
+      over = true;
+      clear();
+      if (end) setWatchEnd(end);
+    };
+    const after = (ms: number) => {
+      clear();
+      timer = setTimeout(() => void ask(), ms);
+    };
+    const hidden = () => document.visibilityState === "hidden";
+
+    /** The data has arrived: the run succeeded and the tables are there. A "succeeded" without them is not it. */
+    const arrived = (now: InstallStatus) =>
+      now.backfill.state === "succeeded" && (days !== null ? now.tables.count >= days : now.tables.count > 0);
+
+    async function ask() {
+      timer = null;
+      if (over || asking || run.current !== mine) return;
+      // Nothing is asked while the tab is hidden. The next check comes when it is seen again.
+      if (hidden()) return;
+      if (firstAt === 0) firstAt = Date.now();
+      else if (Date.now() - firstAt >= WATCH_FOR_MS) return stop("stopped");
+      asking = true;
+      lastAt = Date.now();
+      try {
+        const now = await getInstallStatus(work.current.spec);
+        if (over || run.current !== mine) return;
+        // The data has arrived. The last line takes its tick and its words; nothing else on the page changes.
+        if (arrived(now)) {
+          stop(null);
+          setStatus(now);
+          setStarted(false);
+          return;
+        }
+        // The run stopped. The page shows what a reload would show at this moment: the `failed` phase for
+        // the tab that asked for this install, as the reads of `steps` and `begin` already do, and "Install
+        // not complete" for a page that only found the install at its address.
+        if (now.backfill.state === "failed") {
+          stop(null);
+          setStatus(now);
+          const s = work.current.spec;
+          setPhase(mayWrite.current ? { kind: "failed", step: stepsOf(s).length - 1, error: historyStopped(s) } : { kind: "found" });
+          return;
+        }
+        // The run is still going. Only the count of tables is taken from this answer, for the time the
+        // line promises: the rest of the status would move the line off the state the visitor can see.
+        setWritten(now.tables.count);
+      } catch (e) {
+        if (over || run.current !== mine) return;
+        const error = toApiError(e);
+        // The sign-in has ended. The page stays the end of the install and says how to come back.
+        if (error.status === 401) return stop("signed-out");
+        // A failure that says nothing about the visitor, after the three tries of the helper itself: the
+        // check is skipped without a word, and the next one comes in its turn. Any other refusal stops.
+        if (!error.passing) return stop("stopped");
+      } finally {
+        asking = false;
+      }
+      after(WATCH_MS);
+    }
+
+    // The first check comes 30 seconds after the page reached this phase.
+    after(WATCH_MS);
+    const onVisible = () => {
+      if (over) return;
+      // Hidden: the checks pause, and the timer that was waiting goes with them.
+      if (hidden()) return clear();
+      // Seen again: a check at once, unless the one before it was less than 30 seconds ago. A visitor
+      // moving between tabs must not make the backend read their project again and again.
+      after(Math.max(0, WATCH_MS - (Date.now() - (lastAt || bornAt))));
+    };
+    document.addEventListener("visibilitychange", onVisible);
+    // Nothing outlives the page: not the timer, not the listener. The arrow that starts again, the
+    // sign-out and any navigation take the page away, and `run` makes whatever is in flight stale.
+    return () => {
+      over = true;
+      clear();
+      document.removeEventListener("visibilitychange", onVisible);
+    };
+  }, [watchable, watchEnd, days]);
+
   if (phase.kind === "looking") return <Waiting label="Looking at your project" />;
 
   // Only an uninstall leads here, and none can start while it is switched off.
@@ -543,18 +693,14 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
     }
   };
 
-  const signInEnded = phase.kind === "paused" && phase.error.status === 401;
-
-  // How many days of history the line that fills the dataset promises. Those this tab asked for, or those
-  // the project says the install was asked for (api.md v1.16); null when neither is known, which is an
-  // install this tab did not ask for whose status carries no `historyDays`.
-  const days = mayWrite.current ? spec.historyDays : typeof status?.historyDays === "number" ? status.historyDays : null;
+  // The sign-in has ended: the page said so on the paused page (decision D-41), and says so under the box
+  // when a check of the end of the install met it (decision D-94). Either way the sign-out is not shown.
+  const signInEnded = (phase.kind === "paused" && phase.error.status === 401) || watchEnd === "signed-out";
 
   // ---------- The last line: the run that fills the dataset (decision D-90) ----------
-  // Where the run stands, read once with the rest of the page. No polling is added: the page reads the
-  // project once (decision D-52, option b), so this line does not change while the visitor watches. On a
-  // reload during the run the duration is counted again from the start of the run, so it overshoots; that
-  // is the safe side and is accepted (decision D-90).
+  // Where the run stands. At the end of the install, while the run is going, it is read again every 30
+  // seconds (decision D-94, `watchable` above), so this line switches to its finished state by itself and
+  // the time it promises goes down. Everywhere else it is read once, with the rest of the page.
   // The project's "failed" is the run of **before** while this page is checking or running its steps: the
   // status was read at the start of `steps` and still carries the last run, which "Try again" and
   // "Continue the install" are there to replace. Reading it then would show the line as stopped through
@@ -572,12 +718,15 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
   // run starts it waits like the lines before it, so it takes the mark of its place in the list.
   const runMark = (i: number): Pick<Line, "state" | "now"> =>
     runStopped ? { state: "bad" } : runFilled ? { state: "ok" } : runGoing ? { state: "wait", now: true } : { state: stateOf(i), now: phase.kind === "running" && phase.step === i };
+  // What the time the running line promises is counted from (decision D-94): the day tables the latest
+  // check found, or those of the one reading the page already has until a check has answered.
+  const filled = written ?? status?.tables.count ?? 0;
 
   const steppedLines: Line[] = shown.map((info, i): Line => {
     const fills = info.name === "run-backfill";
     return {
       key: info.name,
-      text: fills ? runLine(runState, days) : info.line(held),
+      text: fills ? runLine(runState, days, filled) : info.line(held),
       ...(fills ? runMark(i) : { state: stateOf(i), now: phase.kind === "running" && phase.step === i }),
       // The technical detail of the step (decision D-76) and nothing else: since decision D-85 what a failed
       // step says stands under the box, not in the line, so it is never scrolled out of sight. The run that
@@ -677,6 +826,22 @@ function Installer({ spec: asked, draft: answered, wishKey }: InstallerProps) {
               : phase.unread
                 ? "This page could not look at your project for a moment. No step has failed."
                 : <Mailed text={`${asSentence(phase.error.message)} ${asSentence(phase.error.hint)}`} />}
+          </p>
+        ) : null}
+        {/* The page stopped asking whether the data has arrived (decision D-94). Under the box, always
+            in sight (decision D-85). The page stays as it is: the last line keeps its last known state,
+            and "Open it in BigQuery" stays. With the sign-in ended the first words are the link to the
+            sign-in, which comes back to this same address. */}
+        {watchEnd ? (
+          <p className="advice" role="status">
+            {watchEnd === "signed-out" ? (
+              <>
+                <a href={loginUrl(here())}>{WATCH_SIGN_IN_LINK}</a>
+                {WATCH.signedOut.slice(WATCH_SIGN_IN_LINK.length)}
+              </>
+            ) : (
+              WATCH.stopped
+            )}
           </p>
         ) : null}
       </div>
