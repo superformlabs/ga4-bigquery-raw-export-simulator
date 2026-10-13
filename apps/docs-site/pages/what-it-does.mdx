@@ -1,0 +1,31 @@
+---
+title: What the tool does, and what it puts in your project
+sidebar_label: What the tool does
+description: The fake GA4 export the tool builds in BigQuery, and every thing it creates in the project you choose.
+---
+
+The tool builds a fake Google Analytics 4 export in BigQuery: the daily
+`events_YYYYMMDD` tables that a real GA4 property would send, filled with
+invented traffic for an invented website. You can query it, join it, break it
+and rebuild it, and no real person's data is anywhere in it.
+
+To do that it creates these things in the project you choose. Nothing is
+created until every check on the first screen has passed.
+
+| What it creates | Its name | What it is for |
+|---|---|---|
+| Google services switched on | Cloud Run, BigQuery, IAM, Cloud Resource Manager, and Cloud Scheduler only if you ask for the daily refresh | The services the rest of the install needs. A service that is switched on and unused runs nothing and costs nothing |
+| A BigQuery dataset | `analytics_<number>`, or a name you type on the Pro screen | Where the tables live |
+| A service account | `ga4synth@<your project>.iam.gserviceaccount.com` | The identity the generator runs as. One per project, shared by every install in it |
+| Two roles for that account | BigQuery Job User, Cloud Run Invoker | The least it needs to write tables and to start its own job |
+| A Cloud Run job | `ga4synth-<number>` | The container that generates the data and loads it |
+| A Cloud Scheduler job | `ga4synth-<number>` | Starts the Cloud Run job once a day. **Only if you chose a daily refresh** |
+| One run of the Cloud Run job | | Fills the dataset with the history you asked for |
+
+The number at the end of the names is the same for every part of one
+install. One project can hold several installs, each with its own number.
+The service account is the exception: there is one for the whole project
+and every install shares it.
+
+An install made before 2026-09-28 has a job and a schedule called
+`ga4synth-daily`, with no number.

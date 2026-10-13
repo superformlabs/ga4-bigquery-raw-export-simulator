@@ -1,0 +1,47 @@
+/*
+  The look of the documentation site, kept close to the app (apps/web/app/globals.css):
+  the GA4Dataform blue, the same ink, the visitor's own system font, no font file loaded.
+  Everything else is the Docusaurus "classic" theme as it comes.
+*/
+
+:root {
+  --ifm-color-primary: #1a72e8;
+  --ifm-color-primary-dark: #1567d4;
+  --ifm-color-primary-darker: #1461c9;
+  --ifm-color-primary-darkest: #1050a5;
+  --ifm-color-primary-light: #327feb;
+  --ifm-color-primary-lighter: #3e87ec;
+  --ifm-color-primary-lightest: #629df0;
+
+  --ifm-font-color-base: #16181d;
+  --ifm-font-family-base: -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  --ifm-code-font-size: 92%;
+  --ifm-navbar-shadow: none;
+  --ifm-navbar-background-color: #fff;
+  --ifm-footer-background-color: #fff;
+}
+
+/* The name of the app is long, so the top bar gives it the room it needs. */
+.navbar__title {
+  font-weight: 600;
+  white-space: normal;
+  line-height: 1.2;
+}
+
+/* One line under the top bar and one above the words at the bottom, instead of the theme's shadow. */
+.navbar {
+  border-bottom: 1px solid #e7eaef;
+}
+.footer {
+  border-top: 1px solid #e7eaef;
+  font-size: 14px;
+}
+/* A table of figures reads better with room around the numbers, and must still fit a phone. */
+.markdown table {
+  display: table;
+  width: 100%;
+}
+.markdown table th,
+.markdown table td {
+  vertical-align: top;
+}

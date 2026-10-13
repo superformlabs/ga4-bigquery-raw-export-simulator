@@ -1,0 +1,2 @@
+# Reports of test runs (vitest --reporter=json). An output, not a source.
+.vitest/

@@ -1,0 +1,209 @@
+---
+title: What it costs
+sidebar_label: What it costs
+description: Measured figures and Google list prices for the install, the daily refresh, storage and queries, with the free allowances.
+---
+
+Every figure on this page is traced to a measurement or to a Google price
+list. Nothing is estimated. Where a figure could not be checked, the page
+says so.
+
+## About money, before anything else
+
+**You pay for everything this tool creates.** It creates it in your own
+Google Cloud project, on your own billing account. We hold nothing and we
+pay for nothing after you close the page.
+
+Every price below is in euros, for the region `us-central1`, and is a list
+price before any free allowance and before any discount your account may
+have. Your own bill may differ: another region can cost more, and a
+committed-use or partner discount can cost less. The prices were read from
+Google's own Cloud Billing price list on 2026-10-03, and each one names the
+code Google gives it, so you can look it up yourself. The free allowances
+come from Google's pricing pages, and the end of this page says which page
+each one is on.
+
+The short answer, for a normal install: **most likely nothing at all.**
+Google gives every billing account a monthly allowance on all three services
+this tool uses, and one install fits inside every one of them, with or
+without the daily refresh.
+
+That is not a promise, because the allowances belong to your whole billing
+account and not to this project. If you have already used them up on other
+work, this install costs **at most about EUR 4.64 in its first year**, and
+about EUR 4.61 a year after that. The table at the end of this page splits
+that out, so you can see which part applies to you.
+
+## How long it takes, and what the install itself costs
+
+Measured on 2026-10-03 on our own staging project, for a 90-day history:
+
+| What was measured | Figure |
+|---|---|
+| Time from the click to the last table | 5 minutes 17 seconds |
+| What it produced | 90 tables, 913,250 rows, 682.8 MiB |
+| Billed machine time | 183.96 seconds |
+| What it cost | **EUR 0.0285** |
+
+So the install itself costs under three euro cents. A shorter history costs
+less: the job takes about two minutes to start whatever you ask for, then
+about 2.5 seconds for each day of history.
+
+One honest caveat about that figure. Google billed 184 seconds while the
+container itself ran for 219 seconds. The two could not be reconciled,
+because Google's monitoring reports these numbers late and timestamps them
+later than the log does. We used the billed number, because that is what
+Google says it charges, but it is the smaller of the two. If the true
+number is the larger one, the cost of the install rises by about a fifth,
+to roughly EUR 0.034. Either way it is a few cents.
+
+Prices used: Cloud Run Jobs CPU in us-central1, code `257B-2A84-3396`, at
+EUR 0.000015839 per CPU-second; Cloud Run Jobs Memory, code
+`8A79-9F45-5F32`, at EUR 0.000001759 per gibibyte-second.
+
+## The daily refresh: the only cost that repeats
+
+If you ask for new data every morning, the Cloud Run job runs once a day
+and makes three days of data. That run is small, about 24 seconds of real
+work, but Google bills Cloud Run a **minimum of one minute** for any run.
+So you are charged for a minute every morning.
+
+**For almost everyone that minute is free.** Google gives every billing
+account a monthly allowance for Cloud Run jobs: the first 240,000
+CPU-seconds and the first 450,000 gibibyte-seconds. The daily refresh uses
+14,600 CPU-seconds and 29,200 gibibyte-seconds a month, which is about a
+sixteenth of the first and a fifteenth of the second. You could run about
+**15 installs** on one account before any of them cost a cent.
+
+If your account has already used that allowance up on other Cloud Run work,
+the daily refresh costs this:
+
+| | |
+|---|---|
+| One daily run | EUR 0.0093 |
+| One month | EUR 0.28 |
+| **One year** | **EUR 3.39** |
+
+Of each run, EUR 0.0076 is the processor and EUR 0.0017 is the memory.
+
+The Cloud Scheduler job that starts it is a separate charge with its own
+allowance. Google gives every billing account **3 scheduler jobs free**, and
+this install creates one. So again, for almost everyone it is free. If you
+already run 3 or more scheduler jobs on the same billing account, this one
+costs **EUR 0.088 a month**, about **EUR 1.06 a year**. Price code
+`A5D6-43A2-28A7`.
+
+**Our recommendation on the daily refresh: say yes to it.** It is free for
+almost everyone, and it makes the install more forgiving. Without it, your
+dataset is filled by a single run, so if that run fails there is no second
+chance and you would have to install again. With it, the next morning's run
+fills whatever is missing on its own.
+
+Say no in two cases. If you only want a fixed dataset to practise on, and
+you would rather nothing ran in your project at all, then nothing needs to.
+And if you are installing many datasets on one billing account, past about
+15 of them the daily refreshes start to cost real money, so turn the refresh
+off on the ones you are not actively using.
+
+## Keeping the data: BigQuery storage
+
+The 90-day dataset is 682.8 MiB, which is **0.67 GiB**.
+
+Google gives every billing account **10 GiB of BigQuery storage free every
+month**, in each region. The dataset is a fifteenth of that allowance.
+
+**So for a normal install, storage costs you nothing at all.** You would
+have to be holding more than about 9.3 GiB of other BigQuery data in the
+same region before this dataset started costing you anything.
+
+If you are past that allowance, it costs **EUR 0.0135 a month**, about
+**EUR 0.16 a year**. Price code `0018-A5A0-9D6D`, Active Logical Storage in
+us-central1, EUR 0.0202 per GiB-month, with the first 10 GiB-months free.
+
+A table that you do not change for 90 days moves to a cheaper rate on its
+own, EUR 0.0141 per GiB-month, code `55B3-2F73-B6A3`. Since these tables
+are never rewritten, that is where most of the dataset ends up. It makes
+almost no difference, because the whole thing is inside the free allowance.
+
+## Querying it: the one place you could actually spend money
+
+This is worth reading, because it is the likeliest way this dataset costs
+you something real. BigQuery charges for storing data, and it charges again
+every time you **read** it. Pointing Looker Studio, a notebook or a
+dashboard at the dataset reads it, and a dashboard that refreshes often
+reads it many times.
+
+Google gives every billing account **1 TiB of query data free every
+month**. After that it is **EUR 5.50 per TiB**. Price code
+`3362-E469-6BEF`, Analysis in us-central1.
+
+Reading every column of all 90 days is 0.67 GiB, which costs **EUR 0.0036**
+if you are past the free allowance. Inside the free allowance you could read
+the entire dataset **about 1,500 times a month**, which is about 50 times a
+day, and still pay nothing.
+
+**So you are very unlikely to spend money querying this dataset.** It is
+too small. The warning is worth keeping anyway, for two reasons. If you
+already query large tables on the same billing account, this dataset eats
+into the same 1 TiB allowance. And the habit matters more than this dataset
+does: `SELECT *` on a real GA4 export, which can be thousands of times
+larger, is how people get a surprising bill. Select the columns you need,
+and filter on the table date.
+
+## All of it together
+
+One install, 90 days of history, in us-central1, at list prices.
+
+| | Without the daily refresh | With the daily refresh |
+|---|---|---|
+| The install itself, once | free under the Cloud Run allowance, otherwise EUR 0.03 | same |
+| Cloud Run, every year | nothing more | free under the same allowance, otherwise EUR 3.39 |
+| Cloud Scheduler, every year | nothing, none is created | free for the first 3 jobs on your account, otherwise EUR 1.06 |
+| BigQuery storage, every year | free under the 10 GiB allowance, otherwise EUR 0.16 | same |
+| Querying it | free under the 1 TiB allowance | same |
+| **First year, for most people** | **nothing** | **nothing** |
+| **First year, if every allowance is already used up** | about EUR 0.19 | about EUR 4.64 |
+
+The one-off install is inside the Cloud Run allowance too: the 90-day
+history uses 1,472 CPU-seconds of the 240,000 a month, under a hundredth of
+it.
+
+## Where the free allowances come from
+
+All three are published by Google, and we checked each one rather than
+repeating it from memory.
+
+| Allowance | Amount, per billing account per month | Where we read it |
+|---|---|---|
+| Cloud Run jobs | 240,000 CPU-seconds and 450,000 gibibyte-seconds | The "Jobs" section of Google's Cloud Run pricing page |
+| BigQuery storage | 10 GiB | Built into price code `0018-A5A0-9D6D` as a free first tier |
+| BigQuery queries | 1 TiB | Built into price code `3362-E469-6BEF` as a free first tier |
+| Cloud Scheduler | 3 jobs | Built into price code `A5D6-43A2-28A7` as a free first tier |
+
+Two things to know about all of them. They belong to your **billing
+account**, not to one project, and they are shared across every project on
+it. And they reset every month.
+
+If you want to check the Cloud Run one yourself, be careful which page you
+read. Google's "Always Free" summary page gives Cloud Run as 180,000
+CPU-seconds, but it labels that figure as applying to request-based billing,
+which is how web services are charged. This tool creates a Cloud Run **job**,
+which is charged differently, and jobs have their own larger allowance on the
+pricing page. We nearly got this wrong in both directions before settling
+it.
+
+## One rule we could not verify
+
+BigQuery is documented to charge a minimum of 10 MB for each table a query
+touches. For a query across all 90 tables that would be 0.9 GiB rather than
+0.67 GiB. That rule is not in the price list we read, so we could not
+confirm it. It does not change anything above: even at 0.9 GiB a query, the
+free allowance covers more than a thousand of them a month.
+
+## Watch your own bill, not our figures
+
+Whatever we write here, the number that matters is yours. In the Google
+Cloud console, open **Billing**, then **Reports**, and filter by your
+project. Set a budget alert while you are there: Billing, then **Budgets
+and alerts**. A budget of a few euros on a project you only use for this
+will tell you long before anything surprising happens.

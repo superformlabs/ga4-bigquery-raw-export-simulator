@@ -1,0 +1,68 @@
+# The app's generator, the Python package ga4synth (decision D-91).
+#
+# The code is here, in src/ga4synth/, beside the app's two configurations
+# (config/default and config/ecommerce, decision D-23) and the integration
+# tests that check it against the contracts. It was copied from the commit
+# the app used before D-91; see ORIGIN.md.
+#
+#   cd packages/generator
+#   uv sync --python 3.12
+#   uv run ga4synth --property config/default/property.yaml --mixer config/default/mixer.yaml verify --date 2026-09-01
+#   uv run ga4synth --property config/ecommerce/property.yaml --mixer config/ecommerce/mixer.yaml verify --date 2026-09-01
+#   uv run pytest
+
+[project]
+name = "ga4synth"
+version = "0.1.0"
+description = "Synthetic GA4 BigQuery export generator"
+readme = "README.md"
+# ga4synth itself runs on 3.9, but its [bigquery] extra
+# (google-cloud-bigquery) needs 3.10 or newer. The container and the tests use
+# the extra, so 3.10 is the floor. The system Python on the dev machine is
+# 3.9; use --python 3.12.
+requires-python = ">=3.10"
+license = {file = "LICENSE"}
+dependencies = ["PyYAML>=6.0"]
+classifiers = [
+  "License :: OSI Approved :: MIT License",
+  "Programming Language :: Python :: 3",
+  "Topic :: Software Development :: Testing",
+]
+
+# Loading into BigQuery is optional, so the generator stays usable with a
+# single dependency.
+[project.optional-dependencies]
+bigquery = ["google-cloud-bigquery>=3.0"]
+
+[project.scripts]
+ga4synth = "ga4synth.cli:main"
+
+[build-system]
+requires = ["setuptools>=68"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+# The export schema ships inside the package. It is the specification the
+# generator is written against, never edited by users, and must resolve
+# regardless of how the package was installed.
+[tool.setuptools.package-data]
+ga4synth = ["data/*.json"]
+
+[dependency-groups]
+# The last line installs this package's own bigquery extra, so a plain
+# `uv sync` gives the same virtual environment as before D-91: ga4synth with
+# google-cloud-bigquery, as the container has it.
+#
+# pytest: the tests. pyyaml: tests/test_configurations.py reads the two
+# configurations to compare them, and tests/test_ga4synth.py builds variants
+# of them. The generator depends on it too; naming it here keeps the tests
+# working if the generator ever stops depending on it.
+dev = ["pytest>=8", "pyyaml>=6", "ga4synth[bigquery]"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+# Print the reason of a skipped test. No test is skipped today; the flag stays
+# so that one added later says why.
+addopts = "-rs"

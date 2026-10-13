@@ -1,0 +1,55 @@
+# What NOT to upload to Cloud Build when infra/deploy-app.sh submits the
+# repository root as the build context (passed with --ignore-file). Same
+# syntax as .gitignore. This also defines the Docker build context, so no
+# separate .dockerignore is needed.
+
+# Version control, editor and agent scratch space
+.git
+.context
+.conductor
+.claude
+.DS_Store
+
+# Secrets: the image must never contain a .env file
+.env
+.env.*
+
+# Dependencies and build output (rebuilt inside the container)
+node_modules
+.next
+dist
+build
+.venv
+__pycache__
+*.pyc
+.pytest_cache
+*.tsbuildinfo
+next-env.d.ts
+
+# Not needed to build either app
+docs
+tests
+packages
+apps/api/test
+apps/web/mocks
+apps/web/tests
+infra/*.sh
+infra/lib
+infra/env
+infra/IMAGE
+infra/IMAGE.*
+infra/URLS
+infra/URLS.*
+*.md
+
+# The documentation site (apps/docs-site), which apps/web/Dockerfile builds
+# into the web image and serves at /docs (decision D-87). Line 30 above,
+# `docs`, and line 43, `*.md`, would drop part of it, so the whole folder is
+# let back in here. What must not reach the build is dropped again after it,
+# because a line only beats the lines above it.
+!apps/docs-site/**
+apps/docs-site/node_modules
+apps/docs-site/build
+apps/docs-site/.docusaurus
+apps/docs-site/.env
+apps/docs-site/.env.*

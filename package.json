@@ -1,0 +1,17 @@
+{
+  "name": "ga4-fake-dataset-generator-app",
+  "private": true,
+  "workspaces": [
+    "apps/*"
+  ],
+  "scripts": {
+    "dev:web": "npm run dev --workspace apps/web",
+    "dev:api": "npm run dev --workspace apps/api",
+    "dev:docs": "npm run dev --workspace apps/docs-site",
+    "docs": "npm run build --workspace apps/docs-site && rm -rf apps/web/public/docs && mkdir -p apps/web/public && cp -r apps/docs-site/build apps/web/public/docs",
+    "test": "npm test --workspaces --if-present"
+  },
+  "engines": {
+    "node": ">=22"
+  }
+}

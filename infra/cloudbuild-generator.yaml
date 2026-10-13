@@ -1,0 +1,126 @@
+# Cloud Build recipe used by infra/build.sh for the generator image.
+#
+# Submitted from the temp folder that build.sh prepares: a copy of the files
+# packages/generator/Dockerfile needs, which is the generator's source in
+# src/ga4synth/, pyproject.toml, README.md, LICENSE, and the app's two
+# configurations in config/default/ and config/ecommerce/ (decision D-91).
+#
+#   gcloud builds submit <folder> --config=infra/cloudbuild-generator.yaml \
+#     --substitutions=_IMAGE=<image:tag>,_CHECK_DATE=<YYYY-MM-DD>
+#
+# The image is built, then checked, then published. A step that fails stops
+# the build, and an image that fails a check is never published.
+#
+# Contract: docs/contracts/generator-cli.md ("Container contract").
+steps:
+  - id: build
+    name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --tag=${_IMAGE}
+      - .
+
+  # The four files are where the contract says, nothing is left at the old
+  # place, and the two environment variables name the ecommerce pair. The
+  # Dockerfile sets both; this reads them back off the built image.
+  # "$$" is how this file writes a "$" that Cloud Build must leave alone.
+  - id: check-files
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        docker run --rm --entrypoint sh "${_IMAGE}" -c '
+          set -eu
+          for file in \
+            /app/config/default/property.yaml /app/config/default/mixer.yaml \
+            /app/config/ecommerce/property.yaml /app/config/ecommerce/mixer.yaml; do
+            if [ ! -s "$$file" ]; then echo "missing in the image: $$file" >&2; exit 1; fi
+          done
+          for file in /app/config/property.yaml /app/config/mixer.yaml; do
+            if [ -e "$$file" ]; then echo "must not be in the image: $$file" >&2; exit 1; fi
+          done
+          if [ "$$GA4SYNTH_PROPERTY" != /app/config/ecommerce/property.yaml ]; then
+            echo "GA4SYNTH_PROPERTY is $$GA4SYNTH_PROPERTY" >&2; exit 1
+          fi
+          if [ "$$GA4SYNTH_MIXER" != /app/config/ecommerce/mixer.yaml ]; then
+            echo "GA4SYNTH_MIXER is $$GA4SYNTH_MIXER" >&2; exit 1
+          fi
+          echo "ok: four files, two variables"
+        '
+
+  # Each configuration generates one day that passes the generator's own
+  # schema check and invariants. Written as the job writes it: the two global
+  # options first, then the command.
+  - id: check-default
+    name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --rm
+      - ${_IMAGE}
+      - --property
+      - /app/config/default/property.yaml
+      - --mixer
+      - /app/config/default/mixer.yaml
+      - verify
+      - --date
+      - ${_CHECK_DATE}
+
+  - id: check-ecommerce
+    name: gcr.io/cloud-builders/docker
+    args:
+      - run
+      - --rm
+      - ${_IMAGE}
+      - --property
+      - /app/config/ecommerce/property.yaml
+      - --mixer
+      - /app/config/ecommerce/mixer.yaml
+      - verify
+      - --date
+      - ${_CHECK_DATE}
+
+  # An install made before api.md v1.8 names no configuration. Its job must
+  # produce the Ecommerce type with this image, as it did with the image it
+  # was installed with. The generator is deterministic, so the same day
+  # summarised without options and with the ecommerce options must be the
+  # same text, and must differ from the default day.
+  - id: check-job-without-options
+    name: gcr.io/cloud-builders/docker
+    entrypoint: bash
+    args:
+      - -c
+      - |
+        set -euo pipefail
+        docker run --rm "${_IMAGE}" summary --date "${_CHECK_DATE}" > /workspace/summary-none.txt
+        docker run --rm "${_IMAGE}" \
+          --property /app/config/ecommerce/property.yaml --mixer /app/config/ecommerce/mixer.yaml \
+          summary --date "${_CHECK_DATE}" > /workspace/summary-ecommerce.txt
+        docker run --rm "${_IMAGE}" \
+          --property /app/config/default/property.yaml --mixer /app/config/default/mixer.yaml \
+          summary --date "${_CHECK_DATE}" > /workspace/summary-default.txt
+        if [[ ! -s /workspace/summary-none.txt ]]; then
+          echo "summary printed nothing" >&2; exit 1
+        fi
+        if ! cmp /workspace/summary-none.txt /workspace/summary-ecommerce.txt; then
+          echo "a job without options does not produce the ecommerce day" >&2
+          diff /workspace/summary-none.txt /workspace/summary-ecommerce.txt >&2 || true
+          exit 1
+        fi
+        if cmp -s /workspace/summary-none.txt /workspace/summary-default.txt; then
+          echo "the default day equals the ecommerce day" >&2; exit 1
+        fi
+        echo "ok: a job without options produces the ecommerce day"
+        cat /workspace/summary-none.txt
+        echo "--- the default day"
+        cat /workspace/summary-default.txt
+
+images:
+  - ${_IMAGE}
+substitutions:
+  _IMAGE: ""
+  _CHECK_DATE: "2026-09-01"
+options:
+  # Logs go to Cloud Logging only, so the build needs no logs bucket.
+  logging: CLOUD_LOGGING_ONLY

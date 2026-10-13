@@ -1,0 +1,1027 @@
+/*
+  GA4 BigQuery Raw Export Simulator. The design the owner validated (decision D-22):
+  docs/design/simulator-flow-mockup.html, twenty-second version. Sizes,
+  colours and timings are the ones of that file.
+
+  Full white page, no frame, one centred column. Titles in the GA4Dataform
+  blue. The way forward is a plain sentence. No hover effect on the choices
+  nor on the sign-in button. The visitor's system font; no font file is loaded.
+*/
+
+:root {
+  --ink: #16181d;
+  --muted: #6b7380;
+  --field: #c3c9d2;
+  --soft: #f1f3f6;
+  --blue: #1a72e8;
+  --ok: #1e7e45;
+  --bad: #b3261e;
+  --wait: #a3aab4;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+html,
+body {
+  margin: 0;
+  height: 100%;
+}
+
+body {
+  font: 18px/1.5 -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, Helvetica, Arial, sans-serif;
+  color: var(--ink);
+  background: #fff;
+  overflow-x: hidden;
+}
+
+/* Every screen's title sits at the same distance from the top (decision D-84): the column is no longer
+   centred vertically, so a title does not move with the length of what is under it, and no title moves
+   while a visitor reads it. The band at the bottom is the one the two corners and the words at the bottom
+   centre sit in when the page is higher than the screen (`useBottomPlace` in components/Screen.tsx). */
+main {
+  min-height: 100%;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: flex-start;
+  padding: 96px 24px 96px;
+  text-align: center;
+}
+/* On a phone the two links in the top-right corner sit higher, so the title may start higher too. */
+@media (max-width: 560px) {
+  main {
+    padding-top: 64px;
+  }
+}
+
+.col {
+  width: 100%;
+  max-width: 460px;
+}
+.col.wide {
+  max-width: 1100px;
+}
+.col.narrow {
+  position: relative;
+  margin: 0 auto;
+}
+/* What a screen says under its field without moving anything: nothing above it moves when it appears. */
+.under {
+  position: absolute;
+  left: 0;
+  right: 0;
+  top: 100%;
+}
+.under .advice {
+  margin-top: 14px;
+}
+.col.settings-col {
+  margin: 0 auto;
+  max-width: 560px;
+}
+
+/* The title said to screen readers. Out of the flow, so that it adds nothing to the height of the page. */
+body > .sr {
+  position: fixed;
+  top: 0;
+  left: 0;
+}
+/* Read by screen readers, not shown. */
+.sr {
+  position: absolute;
+  width: 1px;
+  height: 1px;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+}
+
+/* ---------- Titles ----------
+   No shadow, on the letters or under them (decision D-37). On "Choose your
+   experience" the title falls from a short height, going from invisible to
+   visible; on every other screen it is in place at once (decision D-75). */
+h1 {
+  position: relative;
+  font-size: clamp(36px, 3.5vw, 50px);
+  line-height: 110%;
+  font-weight: 700;
+  letter-spacing: -0.015em;
+  text-wrap: balance;
+  color: var(--blue);
+  margin: 0 0 16px;
+}
+/* Stays on the floor; as wide as the words. */
+h1 .w {
+  position: relative;
+  display: inline-block;
+  max-width: 100%;
+}
+h1 .t {
+  display: inline-block;
+  max-width: 100%;
+}
+/* The three entry animations, on the one screen that keeps them: "Choose your
+   experience", which carries `main.entry` (decision D-75). Everywhere else
+   nothing is declared, so the screen is there at once.
+
+   The title: two movements at once, each with its own pace. The fall comes to
+   rest without going past its place (no bounce), the appearance goes from
+   invisible to visible along a smooth curve. */
+main.entry h1 .t {
+  animation:
+    fall 1.7s cubic-bezier(0.33, 0.2, 0.3, 1) both,
+    appear 1.7s cubic-bezier(0.45, 0.05, 0.55, 0.95) both;
+}
+/* The subtitle does not fall: it appears in place while the title lands. */
+main.entry p.sub {
+  animation: appear 0.9s ease-out 0.8s both;
+}
+/* The rest of the page follows a moment after the title starts. */
+main.entry .rest {
+  animation: rise 0.65s ease-out 1.1s both;
+}
+@media (prefers-reduced-motion: reduce) {
+  main.entry h1 .t,
+  main.entry p.sub,
+  main.entry .rest {
+    animation: none;
+  }
+}
+@keyframes fall {
+  from {
+    transform: translateY(-64px);
+  }
+  to {
+    transform: none;
+  }
+}
+@keyframes appear {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+/* The welcome title, one short line read from the left (decision D-90). It
+   takes the 600 px column of `.sub.many`, so its left edge is the left edge
+   of the text under it, as it was under decision D-83. One font size, written
+   here and no longer measured in the browser: the title is short, and sizing
+   it to fill the column would blow it up.
+
+   44 px is the title size of the app, a little under the 50 px a long title
+   may reach, so that "Welcome to GA4BQRES!" stays inside the column in every
+   font a visitor's system may use. 6vw shrinks it on a narrow phone; below
+   30 px it stops shrinking and wraps instead, which only a very narrow screen
+   reaches. It is never wider than the column: the words wrap first. */
+h1.left {
+  max-width: 600px;
+  margin: 0 auto 16px;
+  text-align: left;
+  font-size: clamp(30px, 6vw, 44px);
+}
+
+/* The subtitle: one grey sentence under the title (decision D-37). Its measure
+   is capped, and not the width of the column: since decisions D-82 and D-85
+   three subtitles are three sentences long (the location screen, the refresh
+   screen and the end of the install), and a line of 1,100 px is too long to
+   read. A short subtitle is centred as before, so nothing about it changes. */
+p.sub {
+  max-width: 700px;
+  margin: 0 auto 48px;
+  color: var(--muted);
+  text-wrap: balance;
+  font-size: 20px;
+  line-height: 1.4;
+  font-weight: 400;
+}
+/* The welcome text: two paragraphs in the place of one sentence (decisions
+   D-74 and D-82). Paragraphs at the 20 px of a subtitle, centred, are a wall,
+   so they take a column of their own: narrower than the title, read from the
+   left, a size between the subtitle and the body, and a line height that
+   gives the eye room. The same grey, so it is still the quiet text under the
+   title. The column holds about 70 letters a line on a computer, and the
+   paragraphs keep their gaps on a phone. */
+.sub.many {
+  max-width: 600px;
+  margin: 0 auto 40px;
+  /* The right edge stays straight: decision D-81 asked for it under a title whose right edge was straight
+     too, and D-83, then D-90, leave the paragraphs as they are. */
+  text-align: justify;
+  color: var(--muted);
+  font-size: 17px;
+  line-height: 1.6;
+  font-weight: 400;
+}
+.sub.many p {
+  margin: 0 0 14px;
+}
+.sub.many p:last-child {
+  margin-bottom: 0;
+}
+/* The links of the welcome text, "read the documentation" (decision D-82) and "open source code"
+   (decision D-90): no colour and no underline of their own at rest, so they are as quiet as the grey text
+   around them, and blue under the mouse. The owner asked for the underline to go on 2026-10-13, after
+   decision D-90 was written, so nothing marks a link at rest any more. Someone moving with the Tab key
+   can still see where the link is: a clear blue outline marks the one that has the cursor. */
+.sub a {
+  color: inherit;
+  text-decoration: none;
+}
+.sub a:hover,
+.sub a:active {
+  color: var(--blue);
+}
+/* `.kbd .sub a:focus` as well as `:focus-visible`, so the blue ring wins over the grey ring the app puts
+   on everything a Tab key reaches (`.kbd a:focus` below). */
+.sub a:focus-visible,
+.kbd .sub a:focus {
+  color: var(--blue);
+  outline: 2px solid var(--blue);
+  outline-offset: 3px;
+  border-radius: 3px;
+}
+@media (max-width: 560px) {
+  .sub.many {
+    font-size: 16px;
+    margin-bottom: 32px;
+    /* A justified line of a narrow column holds few words, and would show gaps between them without this
+       (decision D-83, which keeps the justified paragraphs of decision D-81). */
+    hyphens: auto;
+  }
+}
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+/* ---------- Fields ---------- */
+select,
+input[type="text"],
+input[type="date"],
+input[type="number"] {
+  width: 100%;
+  font: inherit;
+  color: var(--ink);
+  text-align: center;
+  text-align-last: center;
+  padding: 13px 14px;
+  border: 1px solid var(--field);
+  border-radius: 10px;
+  background: #fff;
+}
+/* No ring for someone who clicks, nor when the page puts the cursor in a
+   field. A ring for someone who moves with the Tab key (see KeyboardRing). */
+select,
+input,
+button,
+a,
+[tabindex] {
+  outline: none;
+}
+select:focus,
+input:focus {
+  outline: none;
+  box-shadow: none;
+}
+.kbd select:focus,
+.kbd input:focus,
+.kbd button:focus,
+.kbd a:focus,
+.kbd [tabindex]:focus {
+  outline: 2px solid #8a929e;
+  outline-offset: 3px;
+}
+
+.note {
+  font-size: 14px;
+  margin: 10px 0 0;
+  min-height: 21px;
+  color: var(--bad);
+}
+.note.calm {
+  color: var(--muted);
+}
+
+button {
+  font: inherit;
+  cursor: pointer;
+}
+
+/* A value the visitor sees and cannot change: grey, no border to invite a click (design notes, P-4). */
+select:disabled,
+input[type="date"]:disabled {
+  background: var(--soft);
+  border-color: var(--soft);
+  color: var(--muted);
+  opacity: 1;
+  -webkit-text-fill-color: var(--muted);
+}
+input[type="date"]:disabled::-webkit-calendar-picker-indicator {
+  display: none;
+}
+/* The period of Guided: two dates side by side, each under its name. */
+.dates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.dates label {
+  display: block;
+  font-size: 14px;
+  color: var(--muted);
+  margin: 0 0 6px;
+}
+@media (max-width: 480px) {
+  .dates {
+    grid-template-columns: 1fr;
+    gap: 16px;
+  }
+}
+
+/* ---------- The way forward: a plain sentence. Hidden until a choice is made. ---------- */
+.forward {
+  min-height: 64px;
+  margin-top: 28px;
+}
+.forward.close {
+  margin-top: 8px;
+}
+.go {
+  display: inline-block;
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 8px 4px;
+  font-weight: 400;
+  font-size: 20px;
+  opacity: 0;
+  transform: translateY(6px);
+  visibility: hidden;
+  transition:
+    opacity 0.55s ease,
+    transform 0.55s ease,
+    visibility 0s linear 0.55s;
+}
+.go.show {
+  opacity: 1;
+  transform: none;
+  visibility: visible;
+  transition:
+    opacity 0.55s ease,
+    transform 0.55s ease;
+}
+.go,
+.go:hover,
+.go:focus {
+  text-decoration: none;
+}
+.go:hover {
+  color: #000;
+}
+.go.danger,
+.go.danger:hover {
+  color: var(--bad);
+}
+.go:disabled {
+  color: var(--wait);
+  cursor: default;
+}
+/* The sentence that installs, and the link of the last page: a filled button, white words on the blue of the
+   titles (task UI-32). It looks the same under the mouse: no motion, no change of colour. */
+.go.fill,
+.go.fill:hover {
+  color: #fff;
+  background: var(--blue);
+  border-radius: 10px;
+  padding: 13px 26px;
+  font-weight: 600;
+}
+@media (prefers-reduced-motion: reduce) {
+  .go {
+    transition: none;
+  }
+}
+
+/* ---------- Sign in with Google ----------
+   Google's "light" theme, from its "Sign in with Google Branding Guidelines"
+   (https://developers.google.com/identity/branding-guidelines): a white fill,
+   a 1 px #747775 border, #1F1F1F text, and the G in Google's own colours
+   (`GoogleMark` in components/Marks.tsx, unchanged). Decision D-90, in the
+   place of the app's own grey button.
+
+   Google names the font "Google Sans Medium 14/20". No font file is loaded by
+   this app, and loading Google Sans would mean a request to a third party
+   every time the page opens, so the button keeps the visitor's own font at
+   weight 500, which is medium, and the size of the app's other buttons.
+
+   No hover effect, as before: Google's page asks for none. */
+.google {
+  display: inline-flex;
+  align-items: center;
+  gap: 12px;
+  font-weight: 500;
+  color: #1f1f1f;
+  background: #fff;
+  border: 1px solid #747775;
+  border-radius: 10px;
+  padding: 13px 26px;
+  text-decoration: none;
+  cursor: pointer;
+}
+.google:hover,
+.google:active,
+.google:focus {
+  background: #fff;
+  border-color: #747775;
+  color: #1f1f1f;
+}
+
+button.plain {
+  color: var(--ink);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 15px;
+  text-decoration: underline;
+}
+button.quiet {
+  color: var(--muted);
+  background: none;
+  border: 0;
+  padding: 0;
+  font-size: 14px;
+  margin-top: 32px;
+}
+button.quiet:hover {
+  text-decoration: underline;
+}
+/* ---------- Back: an arrow in the bottom-left corner of the screen ----------
+   On the last page the same corner holds a circular arrow that starts the flow again (task UI-32). */
+button.startagain,
+button.backarrow {
+  position: fixed;
+  left: 24px;
+  bottom: 20px;
+  width: 44px;
+  height: 44px;
+  border-radius: 50%;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--muted);
+  background: none;
+  border: 0;
+}
+/* On a page that is higher than the screen and reaches the corner, the arrow
+   belongs to the page: under the content, in the band that main keeps empty. */
+button.startagain.low,
+button.backarrow.low {
+  position: absolute;
+  bottom: auto;
+}
+/* Sign out: two words in the bottom-right corner of the screen, in line with the back arrow (decision D-41).
+   The same distance from the edges, the same height, the same grey. No border, and no effect under the mouse. */
+button.signout {
+  position: fixed;
+  right: 24px;
+  bottom: 20px;
+  height: 44px;
+  padding: 0;
+  display: flex;
+  align-items: center;
+  color: var(--muted);
+  background: none;
+  border: 0;
+  font-size: 15px;
+  font-weight: 400;
+}
+button.signout.low {
+  position: absolute;
+  bottom: auto;
+}
+button.signout:hover,
+button.signout:active,
+button.signout:disabled {
+  color: var(--muted);
+  background: none;
+}
+button.startagain:hover,
+button.backarrow:hover {
+  color: var(--ink);
+  background: var(--soft);
+}
+/* ---------- "powered by GA4Dataform", at the bottom centre (decision D-86) ----------
+   On every screen, in line with the back arrow of the bottom-left corner and "Sign out" of the
+   bottom-right one: the same 20 px from the bottom, the same 44 px high, the same grey. Smaller than those
+   words, because it is not part of the flow. On a page higher than the screen the three leave the screen
+   for the page together (`useBottomPlace` in components/Screen.tsx), so they stay in line and lie on no
+   content. */
+footer.powered {
+  position: fixed;
+  left: 50%;
+  transform: translateX(-50%);
+  bottom: 20px;
+  height: 44px;
+  display: flex;
+  align-items: center;
+}
+footer.powered.low {
+  position: absolute;
+  bottom: auto;
+}
+footer.powered a {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  font-size: 14px;
+  font-weight: 400;
+  text-decoration: none;
+  white-space: nowrap;
+}
+footer.powered a:hover,
+footer.powered a:active,
+footer.powered a:focus {
+  color: var(--muted);
+  text-decoration: none;
+}
+/* ---------- The two links in the top-right corner (decision D-77) ----------
+   On every screen, the welcome page included: a book with the words "Documentation", and a beetle with the
+   words "Report a bug". The grey, the size of the letters and the weight of "Sign out" in the corner below. No
+   underline and no effect under the mouse. They stay on the screen, and never move to the page. */
+.toplinks {
+  position: fixed;
+  top: 10px;
+  right: 24px;
+  display: flex;
+  align-items: center;
+  gap: 22px;
+  padding: 8px 0 8px 14px;
+  /* The page is white, so this is invisible, and a page higher than the screen scrolls under the words
+     instead of through them. The two corners at the bottom have the rule of `useCornerPlace` for that;
+     here the design keeps nothing in the way, so a plain background is enough. */
+  background: #fff;
+  z-index: 1;
+}
+.toplinks a {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  height: 28px;
+  color: var(--muted);
+  font-size: 15px;
+  font-weight: 400;
+  text-decoration: none;
+  white-space: nowrap;
+}
+.toplinks a:hover,
+.toplinks a:active,
+.toplinks a:focus {
+  color: var(--muted);
+  text-decoration: none;
+}
+/* On a phone the two links keep their words, closer to each other and to the edge. */
+@media (max-width: 480px) {
+  .toplinks {
+    top: 6px;
+    right: 14px;
+    gap: 14px;
+  }
+  .toplinks a {
+    font-size: 14px;
+    gap: 5px;
+  }
+}
+
+/* ---------- Choices: a row of plain options. No hover effect. ---------- */
+.choices {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  justify-content: center;
+}
+.choices button {
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--field);
+  border-radius: 10px;
+  padding: 12px 20px;
+  min-width: 96px;
+}
+.choices button[aria-pressed="true"] {
+  background: var(--soft);
+  border-color: var(--ink);
+  font-weight: 600;
+}
+/* The four locations: one row for each, holding the BigQuery location code and nothing else since
+   decision D-90, which took away the name of the place and the grey hint after it (decision D-82, text B).
+   A row, and not the small buttons side by side of the other choices, so that the longest code fits
+   without wrapping. Read from the left, as the list of steps and the settings of Pro are. */
+.places {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 600px;
+  margin: 0 auto;
+  text-align: left;
+}
+.places button {
+  width: 100%;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--field);
+  border-radius: 10px;
+  padding: 14px 18px;
+  text-align: left;
+  font-size: 17px;
+  line-height: 1.45;
+}
+.places button[aria-pressed="true"] {
+  background: var(--soft);
+  border-color: var(--ink);
+}
+.places button .pick {
+  font-weight: 600;
+}
+
+/* The three experiences: an icon and a name, in a bordered button. */
+.modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 14px;
+  justify-content: center;
+}
+.modes button {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-width: 200px;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--field);
+  border-radius: 10px;
+  padding: 18px 26px;
+  font-size: 20px;
+}
+.modes button .icon {
+  font-size: 24px;
+  line-height: 1;
+}
+.modes button[aria-pressed="true"] {
+  border-color: var(--ink);
+  background: var(--soft);
+}
+
+/* ---------- The project list: a field that can be typed into ---------- */
+.picker {
+  position: relative;
+}
+/* As tall as a closed list of the browser, which it stands for: 51 px in the mock-up. */
+select,
+.picker input {
+  height: 51px;
+}
+.picker input {
+  line-height: normal;
+  padding-left: 40px;
+  padding-right: 40px;
+  text-overflow: ellipsis;
+}
+/* At rest the field reads like a closed list: its invitation is in the colour of text. */
+.picker input::placeholder {
+  color: var(--ink);
+  opacity: 1;
+}
+.picker input:disabled::placeholder {
+  color: var(--wait);
+}
+.picker input:disabled {
+  background: #fff;
+}
+.picker .chevron {
+  position: absolute;
+  right: 14px;
+  top: 50%;
+  margin-top: -8px;
+  color: var(--ink);
+  pointer-events: none;
+}
+.picker ul {
+  position: absolute;
+  z-index: 2;
+  left: 0;
+  right: 0;
+  top: calc(100% + 6px);
+  margin: 0;
+  padding: 6px;
+  list-style: none;
+  max-height: 264px;
+  overflow-y: auto;
+  text-align: left;
+  background: #fff;
+  border: 1px solid var(--field);
+  border-radius: 10px;
+}
+.picker li {
+  padding: 9px 12px;
+  border-radius: 7px;
+  cursor: pointer;
+  overflow-wrap: anywhere;
+}
+.picker li .id {
+  display: block;
+  font-size: 13px;
+  line-height: 1.3;
+  color: var(--muted);
+}
+.picker li[aria-selected="true"] {
+  background: var(--soft);
+}
+.picker li.none {
+  color: var(--muted);
+  cursor: default;
+  font-size: 15px;
+}
+
+/* ---------- Pro: every setting on one page ---------- */
+.settings {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 0 20px;
+  text-align: left;
+}
+.settings > div {
+  min-width: 0;
+}
+.settings label {
+  display: block;
+  font-size: 14px;
+  color: var(--muted);
+  margin: 16px 0 6px;
+}
+.settings .full {
+  grid-column: 1 / -1;
+}
+.settings select,
+.settings input {
+  text-align: left;
+  text-align-last: left;
+}
+.settings .picker input {
+  padding-left: 14px;
+}
+/* The period of Pro: two dates, and the number of days as a plain text beside them. What is wrong with them stands under them. */
+.settings .period {
+  display: grid;
+  grid-template-columns: 1fr 1fr auto;
+  gap: 0 20px;
+  align-items: end;
+}
+.settings .period > div {
+  min-width: 0;
+}
+.settings .period .count {
+  margin: 0;
+  min-width: 72px;
+  padding: 0 0 14px;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.settings .period .note {
+  grid-column: 1 / -1;
+  min-height: 0;
+  margin: 8px 0 0;
+}
+.settings .period .note:empty {
+  display: none;
+}
+
+@media (max-width: 620px) {
+  .settings {
+    grid-template-columns: 1fr;
+  }
+  .settings .period {
+    grid-template-columns: 1fr;
+    align-items: stretch;
+  }
+  .settings .period .count {
+    padding: 10px 0 0;
+  }
+  .modes {
+    flex-direction: column;
+    align-items: stretch;
+    gap: 10px;
+  }
+}
+
+/* ---------- Check list: one sentence per item, a plain mark, no separators ---------- */
+ul.checks {
+  list-style: none;
+  margin: 0 auto;
+  padding: 0;
+  display: inline-block;
+  text-align: left;
+  max-width: 100%;
+}
+/* The lines of the installing page, in a box of their own that scrolls (decision D-85). Its height is
+   capped by the height of the screen, so the list cannot push the fix-it message, "Open it in BigQuery" or
+   the arrow that starts again out of sight, and it fits a phone. A quiet border, the one of the fields, so
+   that the box is seen and the scrollbar is understood. The box takes the Tab key
+   (`components/CheckList.tsx`), which is what lets the arrow keys scroll it, and it takes the ring of every
+   other control. */
+ul.checks.box {
+  display: block;
+  width: 100%;
+  max-width: 620px;
+  max-height: min(44vh, 420px);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  padding: 8px 16px;
+  border: 1px solid var(--field);
+  border-radius: 10px;
+}
+ul.checks li {
+  display: flex;
+  gap: 12px;
+  align-items: flex-start;
+  padding: 4px 0;
+}
+ul.checks .mark {
+  flex: 0 0 20px;
+  height: 26px;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+}
+ul.checks .text {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+ul.checks li.wait .text {
+  color: var(--wait);
+}
+ul.checks li.skip .text {
+  color: var(--muted);
+}
+ul.checks li.bad .text {
+  color: var(--bad);
+}
+.fix {
+  color: var(--ink);
+  font-size: 15px;
+  margin: 2px 0 8px;
+  max-width: 560px;
+}
+.fix code {
+  display: block;
+  margin: 6px 0;
+  font: 13px/1.6 ui-monospace, SFMono-Regular, Menlo, monospace;
+  color: var(--ink);
+  white-space: pre-wrap;
+}
+.fix a {
+  color: var(--ink);
+}
+/* An address in a text: the colour and the weight of the words around it. Underlined where the links of the place are. */
+a.mail {
+  color: inherit;
+  font-weight: inherit;
+  text-decoration: none;
+}
+.fix a.mail {
+  text-decoration: underline;
+}
+.fix .gap {
+  display: inline-block;
+  width: 14px;
+}
+/* The technical detail of a step of the install (decision D-76): the Google service and the exact names it
+   creates, under the words of the line. Plainly in the list, with no button and no window (decision D-66).
+   Grey and smaller than the line, so the list still reads as a list of steps. Names break where they must,
+   so that a long dataset name or a service account does not widen the page on a phone. */
+ul.checks .detail {
+  display: block;
+  color: var(--muted);
+  font-size: 14px;
+  line-height: 1.45;
+  margin: 1px 0 0;
+  /* The same measure as what a failed line and the advice take, so that a long name does not pull the list
+     out to the width of the column. */
+  max-width: 560px;
+  overflow-wrap: anywhere;
+}
+ul.checks .detail:empty {
+  display: none;
+}
+/* What the page says next to a line that is still working. */
+.progress {
+  display: block;
+  color: var(--muted);
+  font-size: 15px;
+  margin: 2px 0 0;
+}
+/* One line of advice under a list or under the sign-in button. */
+.advice {
+  color: var(--ink);
+  font-size: 15px;
+  margin: 24px auto 0;
+  max-width: 560px;
+}
+
+.spin {
+  display: inline-block;
+  width: 15px;
+  height: 15px;
+  border-radius: 50%;
+  border: 2px solid #dde1e7;
+  border-top-color: var(--muted);
+  animation: spin 0.8s linear infinite;
+}
+@keyframes spin {
+  to {
+    transform: rotate(360deg);
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .spin {
+    animation: none;
+  }
+}
+/* A page that waits for an answer before it knows what to show. */
+.waiting {
+  animation: appear 0.4s ease 0.6s both;
+}
+
+/* ---------- Uninstall: a question asked over the page ---------- */
+dialog.ask {
+  width: min(520px, calc(100vw - 32px));
+  max-height: calc(100vh - 32px);
+  overflow: auto;
+  padding: 36px 32px 28px;
+  border: 1px solid var(--field);
+  border-radius: 14px;
+  background: #fff;
+  color: var(--ink);
+  text-align: center;
+}
+dialog.ask::backdrop {
+  background: rgba(255, 255, 255, 0.86);
+}
+dialog.ask h2 {
+  font-size: 26px;
+  line-height: 120%;
+  letter-spacing: -0.015em;
+  font-weight: 700;
+  margin: 0 0 18px;
+  overflow-wrap: anywhere;
+}
+dialog.ask p {
+  font-size: 16px;
+  margin: 0 0 12px;
+  overflow-wrap: anywhere;
+}
+dialog.ask p.small {
+  font-size: 14px;
+  color: var(--muted);
+}
+dialog.ask p.warning {
+  color: var(--bad);
+}
+dialog.ask label.tick {
+  display: inline-flex;
+  gap: 10px;
+  align-items: flex-start;
+  text-align: left;
+  font-size: 16px;
+  margin: 10px 0 2px;
+  cursor: pointer;
+}
+dialog.ask label.tick input {
+  width: 18px;
+  height: 18px;
+  margin: 3px 0 0;
+  flex: 0 0 auto;
+  accent-color: var(--ink);
+}
+dialog.ask .forward {
+  min-height: 0;
+  margin-top: 18px;
+}
+dialog.ask button.quiet {
+  margin-top: 8px;
+  font-size: 15px;
+}
+dialog.ask .fix {
+  text-align: left;
+  margin: 0 auto 8px;
+}

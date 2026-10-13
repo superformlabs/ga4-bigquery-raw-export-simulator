@@ -1,0 +1,61 @@
+name: Report a bug
+description: Something in the GA4 BigQuery Raw Export Simulator went wrong
+title: "Bug: "
+labels: ["bug"]
+body:
+  - type: markdown
+    attributes:
+      value: |
+        Thank you for telling us. We read every report.
+
+        **Please do not write private details here.** This issue is readable
+        by everyone, now and later. So no Google Cloud project ID, no dataset
+        name, no email address, and no key, token or password. We can act on
+        a report without them.
+  - type: input
+    id: page
+    attributes:
+      label: The page you were on
+      description: The address of the page where it went wrong. The app fills this in for you when you report a bug from the app itself.
+      placeholder: https://example.com/install
+    validations:
+      required: false
+  - type: textarea
+    id: what-happened
+    attributes:
+      label: What happened
+      description: What you saw. If a message appeared, copy its words here, with any project ID or dataset name taken out.
+    validations:
+      required: true
+  - type: textarea
+    id: what-expected
+    attributes:
+      label: What you expected
+      description: What you thought would happen instead.
+    validations:
+      required: true
+  - type: textarea
+    id: steps
+    attributes:
+      label: What you did, step by step
+      description: What we would do to see the same thing. One step per line.
+      placeholder: |
+        1. Signed in with Google
+        2. Chose a project
+        3. Clicked "Install it now"
+    validations:
+      required: false
+  - type: input
+    id: browser
+    attributes:
+      label: Your browser and device
+      placeholder: Chrome 141 on Windows 11
+    validations:
+      required: false
+  - type: checkboxes
+    id: no-private-details
+    attributes:
+      label: Before you send it
+      options:
+        - label: This report holds no project ID, no dataset name, no email address and no key.
+          required: true

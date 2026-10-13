@@ -1,0 +1,5 @@
+# ga4synth generate/backfill output
+out/
+
+# setuptools build metadata of the local install
+*.egg-info/

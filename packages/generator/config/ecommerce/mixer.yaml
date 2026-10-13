@@ -1,0 +1,470 @@
+# How much, and how often.
+#
+# Every quantitative dial lives here. Nothing in this file says what the site
+# is; that is property.yaml. Tuning the dataset means editing this file and
+# leaving property.yaml alone.
+#
+#   property.yaml  what exists          hostname, events, pages, catalogue
+#   mixer.yaml     how much, how often  volume, weights, rates, durations
+#
+# Weights are relative, not percentages: they are normalised at use, so
+# {a: 3, b: 1} and {a: 75, b: 25} mean the same thing.
+#
+# Tune by generating a day and looking at it:
+#
+#   ga4synth summary --date 2026-09-01
+
+# ---------------------------------------------------------------------------
+# Volume
+# ---------------------------------------------------------------------------
+volume:
+  # New (first-time) visitors on a baseline day. Total events per day lands
+  # at roughly 12x the day's new visitors once returning visitors, extra
+  # same-day sessions and multi-event sessions are included. 1200 gives about
+  # 12-16k events on an ordinary day, cheap for users to query.
+  new_visitors_per_day: 1200
+  # Multiplicative factors by ISO weekday (1 = Monday).
+  weekday_factor:
+    1: 1.05
+    2: 1.08
+    3: 1.06
+    4: 1.02
+    5: 0.94
+    6: 0.72
+    7: 0.78
+  # Gentle annual seasonality, peaking in late November (retail).
+  seasonality:
+    amplitude: 0.28
+    peak_day_of_year: 330
+  # Day-to-day deterministic jitter, as a fraction.
+  jitter: 0.07
+
+# ---------------------------------------------------------------------------
+# Returning visitors
+# ---------------------------------------------------------------------------
+retention:
+  # How far back to look for returning visitors. Generating one shard replays
+  # the identities (not the events) of cohorts within this window, so this
+  # bounds the cost of generating a single day.
+  window_days: 120
+  # Probability a visitor returns on a given later day:
+  #
+  #   return_base * sum(weight * exp(-days_since_first_visit / decay_days))
+  #     * intent.segments[...].return_factor * calendar returns
+  #
+  # Two terms, because real return behaviour is two things at once: people who
+  # come back within days to finish what they started, and a long tail of
+  # occasional visitors. A single slow decay spreads returns almost evenly over
+  # weeks, which flattens the conversion-lag curve after day 0.
+  # (A single `decay_days: 30` in place of return_curve is still accepted.)
+  return_base: 0.046
+  return_curve:
+    - {weight: 0.6, decay_days: 2.5}
+    - {weight: 0.4, decay_days: 30}
+
+# ---------------------------------------------------------------------------
+# Intent
+# ---------------------------------------------------------------------------
+# A latent purchase intent, drawn once per visitor. It is what ties coming back
+# to buying: the segment that returns soonest is also the one whose visits
+# convert, so returning sessions convert better than first ones, as in a real
+# store. Generation stays stateless because the trait belongs to the identity;
+# no visitor has to remember an earlier day.
+#
+# return_factor multiplies the return probability. conversion_factor multiplies
+# the rate of completing the funnel (see journey below). Weights are relative.
+intent:
+  segments:
+    browsing:    {weight: 70, return_factor: 0.55, conversion_factor: 0.6}
+    considering: {weight: 24, return_factor: 2.2,  conversion_factor: 1.6}
+    ready:       {weight: 6,  return_factor: 1.0,  conversion_factor: 2.6}
+  # Conversion factor by visit number: first visit, second, third and later.
+  # First visits convert least; people buy once they have looked around.
+  session_number_conversion_factor: [0.65, 1.25, 1.45]
+
+# ---------------------------------------------------------------------------
+# Demand
+# ---------------------------------------------------------------------------
+# Day-level conversion propensity, independent of traffic volume. Without it the
+# conversion rate is constant and closed journeys move in lockstep with
+# journeys. All three parts are functions of the date, so any shard can still be
+# generated on its own.
+demand:
+  # By ISO weekday (1 = Monday). Deliberately not the traffic profile: people
+  # browse at the weekend and buy on weekdays.
+  weekday_conversion_factor:
+    1: 1.05
+    2: 1.07
+    3: 1.06
+    4: 1.03
+    5: 0.97
+    6: 0.88
+    7: 0.92
+  # Slow drift: a smooth random curve through a new value every period_days,
+  # log-normal with this sigma. Reads as weeks that sell better or worse.
+  drift: {sigma: 0.25, period_days: 10}
+  # Independent day-to-day variation, log-normal sigma.
+  daily_noise: 0.15
+
+# ---------------------------------------------------------------------------
+# Calendar
+# ---------------------------------------------------------------------------
+# Marketing events. Each one applies on its days, multiplying:
+#   traffic     new visitors
+#   returns     return probability
+#   conversion  conversion factor
+#   channels    channel weights for sessions that day
+# and campaigns adds a campaign to a channel while it runs. The channel's own
+# campaigns in property.yaml stay on beside it, at the share left over by
+# `acquisition.calendar_campaign_share`.
+#
+# Days: `weekday` (ISO, or a list) repeats weekly; `from`/`to` as MM-DD repeat
+# every year and may wrap past the new year; as YYYY-MM-DD they happen once.
+# Where events overlap, factors multiply and the later campaign name wins, so
+# put seasonal campaign names before the sales that replace them.
+calendar:
+  - {name: spring-prospecting, from: "03-01", to: "05-31", campaigns: {paid_social: spring-prospecting}}
+  - {name: summer-prospecting, from: "06-01", to: "08-31", campaigns: {paid_social: summer-prospecting}}
+  - {name: fall-prospecting,   from: "09-01", to: "11-20", campaigns: {paid_social: fall-prospecting}}
+  - {name: winter-prospecting, from: "11-21", to: "02-28", campaigns: {paid_social: holiday-prospecting}}
+  # The weekly newsletter goes out on Tuesday, with a smaller echo on Wednesday.
+  - {name: weekly-digest,      weekday: 2, channels: {email: 3.5}, returns: 1.25, conversion: 1.03}
+  - {name: weekly-digest-echo, weekday: 3, channels: {email: 1.6}, returns: 1.08}
+  - name: summer-sale
+    from: "07-09"
+    to: "07-13"
+    traffic: 1.2
+    returns: 1.35
+    conversion: 1.4
+    channels: {paid_social: 2.2, email: 2.0, paid_search: 1.4}
+    campaigns: {paid_social: summer-sale, email: summer-sale, paid_search: summer-sale}
+  - name: back-to-school
+    from: "08-17"
+    to: "08-23"
+    traffic: 1.1
+    conversion: 1.15
+    channels: {paid_search: 1.5, paid_social: 1.6}
+    campaigns: {paid_social: back-to-school, paid_search: back-to-school}
+  - name: labor-day-sale
+    from: "09-03"
+    to: "09-07"
+    traffic: 1.15
+    returns: 1.3
+    conversion: 1.35
+    channels: {email: 2.2, paid_social: 1.8}
+    campaigns: {email: labor-day-sale, paid_social: labor-day-sale}
+  - name: black-friday
+    from: "11-24"
+    to: "12-01"
+    traffic: 1.35
+    returns: 1.5
+    conversion: 1.5
+    channels: {email: 2.5, paid_social: 2.0, paid_search: 1.6}
+    campaigns: {email: black-friday, paid_social: black-friday, paid_search: black-friday}
+
+# ---------------------------------------------------------------------------
+# Acquisition
+# ---------------------------------------------------------------------------
+acquisition:
+  # Share of Google Ads acquisitions (channels with `gclid: true`) that carry
+  # the gclid and nothing else. That is what auto-tagging sends: the manual_*
+  # fields of collected_traffic_source and the utm-style event_params stay
+  # NULL unless the advertiser also adds UTM parameters to the ad URL. Last
+  # click still names the campaign, because GA4 resolves the click id itself.
+  # At 0.0 every paid-search click carries UTM parameters as well.
+  gclid_only_share: 0.7
+  # Share of a channel's acquisitions that a calendar campaign takes on its
+  # days. The channel's always-on campaigns split the rest by their weights.
+  # At 1.0 the calendar campaign replaces them while it runs.
+  calendar_campaign_share: 0.75
+  # GA4 does not attribute a session to direct when it can avoid it. A session
+  # that arrives direct reports the visitor's last non-direct campaign in
+  # session_traffic_source_last_click, if one was clicked within this many
+  # days. collected_traffic_source still shows what the session itself
+  # collected, which for a direct arrival is nothing. At 0 a direct session
+  # always reports (direct) / (none).
+  last_non_direct_lookback_days: 30
+
+# ---------------------------------------------------------------------------
+# Server-side purchases
+# ---------------------------------------------------------------------------
+# Purchases sent to GA4 from the server rather than the browser. They carry the
+# customer's client id but no session, which is how a real export ends up with
+# conversions that have no traffic touch in front of them.
+server_side:
+  # Share of web purchases confirmed by the server once payment clears, instead
+  # of by the thank-you page. The purchase lands a little after the session,
+  # with no session attached.
+  purchase_share: 0.05
+  confirmation_delay_seconds: [20, 900]
+  # Orders a signed-in customer places without visiting, such as phone or
+  # account reorders. Probability per customer per day, decaying with time
+  # since their first visit.
+  offline_orders:
+    daily_rate: 0.00025
+    decay_days: 45
+    # Share of offline orders whose Measurement Protocol integration sends a
+    # session id. The order then carries ga_session_id and ga_session_number,
+    # and forms a session of one event with no session_start. At 0.0 no
+    # offline order carries a session id.
+    session_id_share: 0.5
+
+# ---------------------------------------------------------------------------
+# Sessions
+# ---------------------------------------------------------------------------
+session:
+  # Hour-of-day weights for session start, local time. Index is the hour.
+  hour_weights:
+    [0.22, 0.14, 0.09, 0.07, 0.07, 0.11, 0.24, 0.46, 0.72, 0.93, 1.00, 0.98,
+     0.95, 0.97, 0.96, 0.92, 0.88, 0.86, 0.90, 0.95, 0.92, 0.78, 0.55, 0.34]
+  # Seconds between consecutive page views.
+  event_gap_seconds: [3, 45]
+  # Events are exported in batches, one per network request. The page-load
+  # request holds first_visit, session_start and page_view only. Every later
+  # event on the page joins the current request if it fires within this many
+  # seconds of the request's first event, and opens a new request otherwise.
+  batch_window_seconds: 5
+  # A session is engaged if it has 2+ page views, lasts 10s+, or converts.
+  # This is GA4's own rule, and it also decides is_active_user.
+  engaged_min_page_views: 2
+  engaged_min_seconds: 10
+  # Share of multi-page sessions in which the visitor clicks a second campaign
+  # part-way through, for example an email link while already browsing. GA4
+  # keeps the session but collects the new campaign on that page view, so the
+  # session carries two sources and its last-click attribution follows the
+  # second one. Single-page sessions have nowhere to switch and never qualify.
+  source_change_rate: 0.12
+  # Share of browser sessions whose session_start never reaches the export,
+  # as happens when GA4 drops or delays that hit. first_visit goes with it.
+  # Every other event of the session is unchanged. At 0.0 every session keeps
+  # its session_start.
+  missing_session_start_rate: 0.02
+  # Extra sessions a visitor has on a visit day, after the first one. Each
+  # extra session is a separate GA4 session with its own ga_session_id, and it
+  # draws its channel like any returning session, so one visitor can arrive
+  # through several channels on the same day.
+  extra_sessions:
+    # Relative weights for the number of extra sessions drawn per visit day.
+    # An extra session that would start after local midnight is dropped, so
+    # the share of visit days with 2+ sessions ends up below what the weights
+    # alone suggest: about 18% here. Set `weights: {0: 1}` for exactly one
+    # session per visitor per day.
+    weights:
+      0: 79
+      1: 15
+      2: 6
+    # Minutes from one session start to the next, as [min, max]. The minimum
+    # must exceed the longest possible session plus GA4's 30 minute session
+    # timeout, so that two sessions never overlap or merge. The config is
+    # rejected otherwise.
+    gap_minutes: [120, 360]
+
+consent:
+  # Share of visitors who grant analytics storage. Consent belongs to the
+  # visitor: whoever denies it denies it on every session. Their rows have no
+  # user_pseudo_id, no user_id, no ga_session_id and no session attribution.
+  # Set to 1.0 for a dataset where every row is identified.
+  analytics_granted: 0.88
+  # Share of visitors granting analytics storage who also grant ads storage.
+  # A visitor who denies analytics storage always denies ads storage.
+  ads_granted: 1.0
+
+identity:
+  # Share of *people* who sign in and so report a user_id. Decided per person,
+  # not per session: a signed-in person reports the same user_id on every
+  # session and on every device. Set to 0.0 for a property with no login.
+  user_id_share: 0.35
+  # Share of new visitors who are an existing person arriving on a second
+  # device. They get their own user_pseudo_id, their own device and their own
+  # sessions, and are tied to the first device only by a shared user_id, which
+  # is exactly how cross-device behaviour appears in a real export. Needs
+  # user_id_share above 0, because without a user_id the second device is
+  # indistinguishable from a new visitor.
+  cross_device_share: 0.18
+  # How far back a second device may reach to find the person it belongs to.
+  # Pair it with retention.decay_days so both devices are plausibly active at
+  # the same time.
+  cross_device_max_lag_days: 30
+
+# ---------------------------------------------------------------------------
+# Mixes
+# ---------------------------------------------------------------------------
+# Relative weights. Every key must exist in the matching property.yaml block,
+# and every key there must appear here; a mismatch is refused at load time
+# rather than silently dropping a channel or double-counting a device.
+
+# Keys must match property.yaml `channels`.
+channel_mix:
+  organic_search: 34
+  direct: 24
+  paid_search: 14
+  paid_social: 10
+  organic_social: 7
+  email: 6
+  referral: 5
+
+# Keys must match property.yaml `devices`.
+device_mix:
+  desktop: 41
+  mobile: 52
+  tablet: 7
+
+# Keys must match property.yaml `geos`.
+geo_mix:
+  us_new_york: 46
+  us_los_angeles: 12
+  us_chicago: 8
+  ca_toronto: 9
+  uk_london: 8
+  de_berlin: 5
+  au_sydney: 5
+  fr_paris: 7
+  # The long tail: 46 more countries that share about 14% of visitors. The
+  # weights follow the country ranking of a real export, flattened so that the
+  # smallest countries still appear a few times a day.
+  nl_amsterdam: 2.74
+  es_madrid: 1.26
+  cz_prague: 1.03
+  it_milan: 0.95
+  hu_budapest: 0.93
+  pl_warsaw: 0.92
+  se_stockholm: 0.67
+  br_sao_paulo: 0.54
+  in_bengaluru: 0.48
+  ch_zurich: 0.47
+  mx_mexico_city: 0.45
+  il_tel_aviv_yafo: 0.42
+  sk_bratislava: 0.41
+  kr_seoul: 0.33
+  ua_kyiv: 0.32
+  fi_helsinki: 0.32
+  co_bogota: 0.3
+  ro_bucharest: 0.28
+  ar_buenos_aires: 0.27
+  no_oslo_municipality: 0.26
+  ae_dubai: 0.24
+  hr_zagreb: 0.22
+  dk_copenhagen: 0.22
+  pt_lisbon: 0.21
+  at_vienna: 0.21
+  nz_auckland: 0.18
+  tr_istanbul: 0.14
+  th_bangkok: 0.13
+  jp_osaka: 0.09
+  bg_sofia: 0.08
+  my_kuala_lumpur: 0.08
+  lv_riga: 0.08
+  id_jakarta: 0.08
+  kz_almaty: 0.07
+  rs_novi_sad: 0.07
+  vn_ho_chi_minh_city: 0.07
+  pk_lahore: 0.07
+  lt_klaipeda: 0.06
+  ge_tbilisi: 0.06
+  ng_lagos: 0.06
+  cl_santiago: 0.06
+  uy_montevideo: 0.05
+  gt_guatemala_city: 0.04
+  cn_guangzhou: 0.03
+  gh_accra: 0.03
+  sa_jeddah: 0.02
+
+# A returning visitor is not necessarily reacquired the way they arrived the
+# first time. These multiply the channel weights above for sessions after the
+# first. 1.0 means no skew; omit a channel to leave it unchanged.
+returning_channel_skew:
+  direct: 2.2
+  email: 1.8
+
+# ---------------------------------------------------------------------------
+# Journey
+# ---------------------------------------------------------------------------
+# The page walk. Conversion rate and session length are emergent properties of
+# these weights rather than direct settings: a purchase requires reaching
+# `purchased`, so session CVR is roughly the product of the path probabilities
+# leading there, and session length falls out of the `end` weights.
+#
+# The shipped weights give a little over half of all sessions a single
+# page_view, a median of 5 events per session, a 90th percentile of 11 to 12,
+# and a session conversion rate near 4%. Measure a change with:
+#
+#   python scripts/session_shape.py 2026-07-01 2026-08-25 2026-09-10
+#
+# Length and conversion pull against each other. Raising the `end` weights shortens sessions
+# and also lowers the chance of reaching `purchased`, so raise the funnel edges
+# (pdp -> cart, cart -> checkout, checkout -> purchased) to keep the
+# conversion rate where it was.
+journey:
+  entry_weights:
+    home: 34
+    plp: 28
+    pdp: 24
+    search: 9
+    blog: 5
+  # `end` terminates the session. Each row must sum with its own `end` to
+  # whatever you like; weights are relative.
+  transitions:
+    home:   {plp: 31, pdp: 10, search: 8, blog: 3, end: 48}
+    plp:    {pdp: 38, plp: 5, home: 2, search: 3, end: 52}
+    pdp:    {pdp: 9, cart: 19, plp: 8, home: 2, end: 62}
+    search: {pdp: 34, plp: 7, search: 4, end: 55}
+    blog:   {home: 8, pdp: 7, plp: 4, end: 81}
+    cart:   {checkout: 56, pdp: 5, plp: 2, end: 37}
+    checkout: {purchased: 69, cart: 4, end: 27}
+    purchased: {end: 100}
+  # Probability an add_to_cart fires while on a pdp.
+  add_to_cart_rate: 0.16
+  # Probability a scroll event fires on a given page. GA4 sends it only when
+  # the visitor reaches the bottom of the page, which most page views do not.
+  scroll_rate: 0.22
+  # Probability an outbound click fires on a given page.
+  outbound_click_rate: 0.012
+  # Cap on pages per session, to bound pathological walks.
+  max_pages: 24
+
+# ---------------------------------------------------------------------------
+# Cart
+# ---------------------------------------------------------------------------
+cart:
+  # Cap on distinct products in one order.
+  max_line_items: 3
+  # Relative weights for units per line.
+  quantity_weights:
+    1: 82
+    2: 14
+    3: 4
+
+# ---------------------------------------------------------------------------
+# Timing
+# ---------------------------------------------------------------------------
+# Seconds between an event and the one before it, as [min, max]. These decide
+# session duration, and therefore the engaged/bounce split and is_active_user:
+# a session is engaged at `session.engaged_min_seconds`, so shortening these
+# ranges pushes more sessions into the bounce bucket.
+#
+# `session.event_gap_seconds` above covers the gap between page views; these
+# cover the events that fire within a page.
+dwell_seconds:
+  # page_view to an event that fires as the page loads: view_item_list,
+  # view_search_results, view_cart, begin_checkout, purchase. Keep the minimum
+  # above zero. Only first_visit, session_start and page_view may share a
+  # timestamp, because any other event tied with session_start competes with
+  # it for the session's first event and carries no campaign.
+  page_load: [0.2, 1.5]
+  select_item: [2, 18]        # listing to the click-through
+  view_item: [1, 4]           # arriving on a product page
+  add_to_cart: [2, 20]
+  add_shipping_info: [8, 40]  # begin_checkout to shipping
+  add_payment_info: [6, 30]   # shipping to payment
+  scroll: [2, 15]
+  outbound_click: [1, 10]
+  custom_event: [1, 12]       # applies to every tracking.custom_events entry
+
+# Depth reported by the enhanced-measurement scroll event. GA4 fires this at
+# 90% by default; set it to another threshold if your property is configured
+# differently.
+scroll_depth_percent: 90
+
+# event_server_timestamp_offset, in microseconds, drawn per event. This is the
+# gap GA4 records between client and server time. Rarely worth changing.
+server_offset_micros: [200000, 4000000]

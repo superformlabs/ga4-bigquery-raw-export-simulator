@@ -1,0 +1,23 @@
+# Conductor per-workspace scratch space
+.context/
+
+# Secrets and local config
+.env
+.env.*
+!.env.example
+*.pem
+*.json.key
+service-account*.json
+
+# Dependencies and build output
+node_modules/
+dist/
+build/
+.next/
+__pycache__/
+*.pyc
+.venv/
+.pytest_cache/
+
+# OS
+.DS_Store

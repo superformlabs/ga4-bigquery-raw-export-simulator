@@ -1,0 +1,8 @@
+.next/
+next-env.d.ts
+*.tsbuildinfo
+
+# The documentation site (decision D-87). `npm run docs` at the repository root
+# builds apps/docs-site into this folder, and apps/web/Dockerfile does the same
+# inside the image. It is build output, never written by hand.
+public/docs/

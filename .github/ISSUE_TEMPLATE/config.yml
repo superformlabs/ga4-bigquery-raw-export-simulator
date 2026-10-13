@@ -1,0 +1,2 @@
+# Only the bug form may open an issue: a blank issue is off.
+blank_issues_enabled: false

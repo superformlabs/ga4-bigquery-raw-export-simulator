@@ -1,0 +1,53 @@
+---
+title: How to remove an install
+sidebar_label: How to remove an install
+description: The three steps that remove one install by hand in the Google Cloud console, and what to leave alone.
+---
+
+**There is no uninstall button.** That is a deliberate choice for now, not
+a fault. You remove an install by hand in the Google Cloud console, and it
+takes about two minutes.
+
+Every part of one install carries the same number, the one at the end of
+its dataset name. Work through the three steps in this order. The schedule
+goes first, so that nothing can start the job while you are removing it.
+
+| Step | Where in the console | What to remove |
+|---|---|---|
+| 1 | Cloud Scheduler | The job `ga4synth-<number>`. It exists only if you chose a daily refresh |
+| 2 | Cloud Run, the "Jobs" tab | The job `ga4synth-<number>` |
+| 3 | BigQuery | The dataset `analytics_<number>`, or the name you typed on the Pro screen. **Deleting a dataset cannot be undone** |
+
+That removes one install and leaves every other install in the project
+working. Check the number against the install you mean to remove before you
+delete anything, because the names differ only by that number.
+
+## Only when the project holds no install at all
+
+The service account is shared by every install in the project. Leave it
+alone while any install remains: the jobs run as that account, and they
+would fail every morning without it.
+
+Once you have removed every install, you may also remove what they shared.
+
+| Step | Where in the console | What to remove |
+|---|---|---|
+| 4 | IAM and admin, then IAM | The two roles of `ga4synth@<your project>.iam.gserviceaccount.com`: BigQuery Job User and Cloud Run Invoker |
+| 5 | IAM and admin, then Service accounts | The service account `ga4synth` |
+
+## What stays behind, and why it does not matter
+
+- **The Google services stay switched on.** Cloud Run, BigQuery and the
+  others remain enabled. A service that is enabled and unused runs nothing
+  and costs nothing.
+- **A dataset you created yourself is never deleted by the tool.** If you
+  made the dataset by hand and pointed an install at it, the install leaves
+  it where it is. Delete it yourself in BigQuery if you want it gone.
+- **An install from before 2026-09-28** has its job and schedule named
+  `ga4synth-daily`, with no number. Remove those by that name.
+
+## If you would rather not
+
+Leave the installs where they are and send us your project ID at
+[support@superformlabs.eu](mailto:support@superformlabs.eu?subject=Please%20remove%20my%20installs).
+We can remove them for you.

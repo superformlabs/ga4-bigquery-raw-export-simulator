@@ -1,0 +1,422 @@
+# What the property IS. The Default type of dataset: the same company and the
+# same site as config/ecommerce/, without its shop (decision D-23).
+#
+# This file belongs to the app, not to the generator. It is
+# config/ecommerce/property.yaml with three changes, and nothing else:
+#
+#   ecommerce.enabled   false
+#   pages               pdp, cart, checkout and purchased are removed
+#   tracking.events     the nine events of a shop are false
+#
+# A test compares the two files and fails on any other difference.
+#
+# This file defines identity and structure: the site, its products, its pages,
+# and what it collects. It answers "what does this property look like", never
+# "how much traffic does it get". Every quantitative dial lives in mixer.yaml.
+#
+# The split is by question, not by convenience:
+#
+#   property.yaml  what exists          hostname, events, pages, catalogue
+#   mixer.yaml     how much, how often  volume, weights, rates, durations
+#
+# Everything here is invented. No value is derived from real traffic, which is
+# why the generated dataset carries no privacy obligation and can be published
+# without review.
+
+property:
+  # A GA4 stream_id is a numeric string. Invented. Note that this is the data
+  # stream id, not the property id: the BigQuery export dataset is named
+  # analytics_<property_id>, so the two are different numbers in a real export
+  # and are not expected to match.
+  stream_id: "7700000002"
+  hostname: "www.northmoor-supply.example"
+  brand: "Northmoor Supply"
+  currency: "USD"
+  # Reporting timezone. Determines which events_YYYYMMDD shard a row lands in,
+  # which is the single most common correctness bug in synthetic GA4 data.
+  timezone: "America/New_York"
+
+seed:
+  # Change this and the entire dataset changes. Keep it fixed once published.
+  master: "northmoor-supply-v1"
+
+# ---------------------------------------------------------------------------
+# Ecommerce
+# ---------------------------------------------------------------------------
+# `enabled: false` turns this into a content property: the pdp, cart, checkout
+# and purchased page types become unavailable, the ecommerce funnel events stop
+# firing, and the `ecommerce` struct and `items` array stay NULL on every row,
+# exactly as they do in a real non-ecommerce export.
+#
+# The rates that decide how often people buy live in mixer.yaml; the numbers
+# here describe how this particular shop charges.
+#
+# Default type: the shop is off. Never set this to true in this file; the
+# Ecommerce type is the other configuration, config/ecommerce/. The three
+# numbers below are kept as they are and have no effect.
+ecommerce:
+  enabled: false
+  tax_rate: 0.0875
+  shipping_flat: 9.95
+  # Orders at or above this subtotal ship free.
+  free_shipping_threshold: 150.0
+
+# ---------------------------------------------------------------------------
+# Acquisition channels
+# ---------------------------------------------------------------------------
+# Identity only. How much traffic each one gets is mixer.yaml `channel_mix`,
+# and every key here must appear there.
+#
+# `campaign`, `term` and `content` populate collected_traffic_source and the
+# utm-style event_params. `gclid: true` marks Google Ads paid traffic.
+#
+# A channel that runs several campaigns at once lists them under `campaigns`
+# instead of `campaign`, each with a relative weight. Every acquisition picks
+# one. An entry is a bare weight, or a mapping with `weight` and optionally its
+# own `term`, `content` and, for Google Ads, `ad_group`. The ad group defaults
+# to the campaign name, and the Google Ads ids are derived from the names.
+# Calendar events in mixer.yaml can add a campaign on their days.
+channels:
+  organic_search:
+    source: google
+    medium: organic
+    referrer: "https://www.google.com/"
+    # A channel is rarely one site. `other_sources` lists the rest of it, each
+    # with its own referrer, and an optional `medium` if it differs. Weights are
+    # relative to `source_weight`, the weight of the `source` above. A channel
+    # with a `gclid` cannot use this: a click id belongs to one ad platform.
+    source_weight: 90
+    other_sources:
+      bing:       {weight: 5, referrer: "https://www.bing.com/"}
+      duckduckgo: {weight: 3, referrer: "https://duckduckgo.com/"}
+      yahoo:      {weight: 2, referrer: "https://search.yahoo.com/"}
+  direct:
+    source: "(direct)"
+    medium: "(none)"
+    referrer: null
+  paid_search:
+    source: google
+    medium: cpc
+    campaigns:
+      brand-core:         {weight: 45, term: "northmoor supply", ad_group: "brand-exact"}
+      nonbrand-outerwear: {weight: 30, term: "waxed chore jacket", ad_group: "chore-jackets-phrase"}
+      shopping-catalog:   {weight: 20, ad_group: "all-products"}
+      competitor-terms:   {weight: 5, term: "heritage workwear brands", ad_group: "competitors-broad"}
+    gclid: true
+    referrer: "https://www.google.com/"
+  paid_social:
+    source: facebook
+    medium: paid_social
+    # The seasonal prospecting campaign comes from the calendar in mixer.yaml.
+    # These two run all year beside it.
+    campaigns:
+      retargeting-dpa:       {weight: 60, content: "catalog-dynamic"}
+      lookalike-purchasers:  {weight: 40, content: "video-15s"}
+    content: "carousel-a"
+    referrer: "https://l.facebook.com/"
+    source_weight: 70
+    other_sources:
+      instagram: {weight: 30, referrer: "https://l.instagram.com/"}
+  organic_social:
+    source: instagram
+    medium: social
+    referrer: "https://l.instagram.com/"
+    source_weight: 55
+    other_sources:
+      facebook:  {weight: 20, referrer: "https://l.facebook.com/"}
+      pinterest: {weight: 12, referrer: "https://www.pinterest.com/"}
+      tiktok:    {weight: 6,  referrer: "https://www.tiktok.com/"}
+      youtube:   {weight: 4,  referrer: "https://www.youtube.com/"}
+      reddit:    {weight: 3,  referrer: "https://www.reddit.com/"}
+  email:
+    source: newsletter
+    medium: email
+    campaigns:
+      weekly-digest:   60
+      welcome-series:  15
+      abandoned-cart:  15
+      back-in-stock:   10
+    referrer: null
+  referral:
+    source: "gearjournal.example"
+    medium: referral
+    referrer: "https://gearjournal.example/reviews/"
+    source_weight: 45
+    other_sources:
+      "outdoorweekly.example": {weight: 22, referrer: "https://outdoorweekly.example/best-chore-coats/"}
+      "chatgpt.com":           {weight: 15, referrer: "https://chatgpt.com/"}
+      "dealsroundup.example":  {weight: 10, referrer: "https://dealsroundup.example/"}
+      "workwearforum.example": {weight: 8,  referrer: "https://workwearforum.example/threads/"}
+
+# ---------------------------------------------------------------------------
+# Devices
+# ---------------------------------------------------------------------------
+# Identity only; the mix lives in mixer.yaml `device_mix`. `brand` becomes
+# device.mobile_brand_name, which real exports leave empty for desktop.
+devices:
+  desktop:
+    os: ["Windows", "Macintosh"]
+    browser: ["Chrome", "Safari", "Edge", "Firefox"]
+  mobile:
+    os: ["iOS", "Android"]
+    browser: ["Chrome", "Safari"]
+    brand: ["Apple", "Samsung", "Google", "Xiaomi"]
+  tablet:
+    os: ["iOS", "Android"]
+    browser: ["Chrome", "Safari"]
+    brand: ["Apple", "Samsung"]
+
+# ---------------------------------------------------------------------------
+# Geography
+# ---------------------------------------------------------------------------
+# Keyed so the mix can be tuned separately; every key must appear in mixer.yaml
+# `geo_mix`. sub_continent and continent must agree with country, so they are
+# specified together rather than derived.
+geos:
+  us_new_york:
+    country: "United States"
+    region: "New York"
+    city: "New York"
+    metro: "New York, NY"
+    continent: "Americas"
+    sub_continent: "Northern America"
+  us_los_angeles:
+    country: "United States"
+    region: "California"
+    city: "Los Angeles"
+    metro: "Los Angeles-Long Beach-Santa Ana, CA"
+    continent: "Americas"
+    sub_continent: "Northern America"
+  us_chicago:
+    country: "United States"
+    region: "Illinois"
+    city: "Chicago"
+    metro: "Chicago IL"
+    continent: "Americas"
+    sub_continent: "Northern America"
+  ca_toronto:
+    country: "Canada"
+    region: "Ontario"
+    city: "Toronto"
+    metro: "(not set)"
+    continent: "Americas"
+    sub_continent: "Northern America"
+  uk_london:
+    country: "United Kingdom"
+    region: "England"
+    city: "London"
+    metro: "London"
+    continent: "Europe"
+    sub_continent: "Northern Europe"
+  de_berlin:
+    country: "Germany"
+    region: "Berlin"
+    city: "Berlin"
+    metro: "(not set)"
+    continent: "Europe"
+    sub_continent: "Western Europe"
+  au_sydney:
+    country: "Australia"
+    region: "New South Wales"
+    city: "Sydney"
+    metro: "(not set)"
+    continent: "Oceania"
+    sub_continent: "Australasia"
+  fr_paris:
+    country: "France"
+    region: "Ile-de-France"
+    city: "Paris"
+    metro: "(not set)"
+    continent: "Europe"
+    sub_continent: "Western Europe"
+  # The long tail. A real property sees dozens of countries, most of them with
+  # a handful of sessions. Every row below is copied from a real GA4 export, so
+  # the region, continent and sub-continent strings are the ones GA4 writes.
+  nl_amsterdam: {country: "Netherlands", region: "North Holland", city: "Amsterdam", metro: "(not set)", continent: "Europe", sub_continent: "Western Europe"}
+  es_madrid: {country: "Spain", region: "Community of Madrid", city: "Madrid", metro: "(not set)", continent: "Europe", sub_continent: "Southern Europe"}
+  cz_prague: {country: "Czechia", region: "Prague", city: "Prague", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe"}
+  it_milan: {country: "Italy", region: "Lombardy", city: "Milan", metro: "(not set)", continent: "Europe", sub_continent: "Southern Europe"}
+  hu_budapest: {country: "Hungary", region: "Budapest", city: "Budapest", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe"}
+  pl_warsaw: {country: "Poland", region: "Masovian Voivodeship", city: "Warsaw", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe"}
+  se_stockholm: {country: "Sweden", region: "Stockholm County", city: "Stockholm", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe"}
+  br_sao_paulo: {country: "Brazil", region: "State of Sao Paulo", city: "Sao Paulo", metro: "(not set)", continent: "Americas", sub_continent: "South America"}
+  in_bengaluru: {country: "India", region: "Karnataka", city: "Bengaluru", metro: "Karnataka Urban", continent: "Asia", sub_continent: "Southern Asia"}
+  ch_zurich: {country: "Switzerland", region: "Zurich", city: "Zurich", metro: "(not set)", continent: "Europe", sub_continent: "Western Europe"}
+  mx_mexico_city: {country: "Mexico", region: "Mexico City", city: "Mexico City", metro: "(not set)", continent: "Americas", sub_continent: "Central America"}
+  il_tel_aviv_yafo: {country: "Israel", region: "Tel Aviv District", city: "Tel Aviv-Yafo", metro: "(not set)", continent: "Asia", sub_continent: "Western Asia"}
+  sk_bratislava: {country: "Slovakia", region: "Bratislava Region", city: "Bratislava", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe"}
+  kr_seoul: {country: "South Korea", region: "Seoul", city: "Seoul", metro: "(not set)", continent: "Asia", sub_continent: "Eastern Asia"}
+  ua_kyiv: {country: "Ukraine", region: "Kyiv city", city: "Kyiv", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe"}
+  fi_helsinki: {country: "Finland", region: "Uusimaa", city: "Helsinki", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe"}
+  co_bogota: {country: "Colombia", region: "Bogota", city: "Bogota", metro: "(not set)", continent: "Americas", sub_continent: "South America"}
+  ro_bucharest: {country: "Romania", region: "Bucharest", city: "Bucharest", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe"}
+  ar_buenos_aires: {country: "Argentina", region: "Buenos Aires", city: "Buenos Aires", metro: "(not set)", continent: "Americas", sub_continent: "South America"}
+  no_oslo_municipality: {country: "Norway", region: "Oslo", city: "Oslo Municipality", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe"}
+  ae_dubai: {country: "United Arab Emirates", region: "Dubai", city: "Dubai", metro: "(not set)", continent: "Asia", sub_continent: "Western Asia"}
+  hr_zagreb: {country: "Croatia", region: "City of Zagreb", city: "Zagreb", metro: "(not set)", continent: "Europe", sub_continent: "Southern Europe"}
+  dk_copenhagen: {country: "Denmark", region: "Capital Region of Denmark", city: "Copenhagen", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe"}
+  pt_lisbon: {country: "Portugal", region: "Lisbon", city: "Lisbon", metro: "(not set)", continent: "Europe", sub_continent: "Southern Europe"}
+  at_vienna: {country: "Austria", region: "Vienna", city: "Vienna", metro: "(not set)", continent: "Europe", sub_continent: "Western Europe"}
+  nz_auckland: {country: "New Zealand", region: "Auckland", city: "Auckland", metro: "(not set)", continent: "Oceania", sub_continent: "Australasia"}
+  tr_istanbul: {country: "Türkiye", region: "Istanbul", city: "Istanbul", metro: "(not set)", continent: "Asia", sub_continent: "Western Asia"}
+  th_bangkok: {country: "Thailand", region: "Bangkok", city: "Bangkok", metro: "(not set)", continent: "Asia", sub_continent: "Southeast Asia"}
+  jp_osaka: {country: "Japan", region: "Osaka", city: "Osaka", metro: "JP_KINKI", continent: "Asia", sub_continent: "Eastern Asia"}
+  bg_sofia: {country: "Bulgaria", region: "Sofia City Province", city: "Sofia", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe"}
+  my_kuala_lumpur: {country: "Malaysia", region: "Federal Territory of Kuala Lumpur", city: "Kuala Lumpur", metro: "(not set)", continent: "Asia", sub_continent: "Southeast Asia"}
+  lv_riga: {country: "Latvia", region: "Riga", city: "Riga", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe"}
+  id_jakarta: {country: "Indonesia", region: "Jakarta", city: "Jakarta", metro: "(not set)", continent: "Asia", sub_continent: "Southeast Asia"}
+  kz_almaty: {country: "Kazakhstan", region: "Almaty Region", city: "Almaty", metro: "(not set)", continent: "Asia", sub_continent: "Central Asia"}
+  rs_novi_sad: {country: "Serbia", region: "Vojvodina", city: "Novi Sad", metro: "(not set)", continent: "Europe", sub_continent: "Southern Europe"}
+  vn_ho_chi_minh_city: {country: "Vietnam", region: "Ho Chi Minh City", city: "Ho Chi Minh City", metro: "(not set)", continent: "Asia", sub_continent: "Southeast Asia"}
+  pk_lahore: {country: "Pakistan", region: "Punjab", city: "Lahore", metro: "(not set)", continent: "Asia", sub_continent: "Southern Asia"}
+  lt_klaipeda: {country: "Lithuania", region: "Klaipeda County", city: "Klaipeda", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe"}
+  ge_tbilisi: {country: "Georgia", region: "Tbilisi", city: "Tbilisi", metro: "(not set)", continent: "Asia", sub_continent: "Western Asia"}
+  ng_lagos: {country: "Nigeria", region: "Lagos", city: "Lagos", metro: "(not set)", continent: "Africa", sub_continent: "Western Africa"}
+  cl_santiago: {country: "Chile", region: "Santiago Metropolitan Region", city: "Santiago", metro: "(not set)", continent: "Americas", sub_continent: "South America"}
+  uy_montevideo: {country: "Uruguay", region: "Montevideo Department", city: "Montevideo", metro: "(not set)", continent: "Americas", sub_continent: "South America"}
+  gt_guatemala_city: {country: "Guatemala", region: "Guatemala Department", city: "Guatemala City", metro: "(not set)", continent: "Americas", sub_continent: "Central America"}
+  cn_guangzhou: {country: "China", region: "Guangdong Province", city: "Guangzhou", metro: "(not set)", continent: "Asia", sub_continent: "Eastern Asia"}
+  gh_accra: {country: "Ghana", region: "Greater Accra Region", city: "Accra", metro: "(not set)", continent: "Africa", sub_continent: "Western Africa"}
+  sa_jeddah: {country: "Saudi Arabia", region: "Makkah Province", city: "Jeddah", metro: "(not set)", continent: "Asia", sub_continent: "Western Asia"}
+
+# ---------------------------------------------------------------------------
+# Product catalogue
+# ---------------------------------------------------------------------------
+# Prices are in `property.currency`. Ignored entirely when ecommerce is off.
+catalogue:
+  - {item_id: "NM-1001", item_name: "Fieldhand Canvas Tote", category: "Bags", price: 68.00, variants: ["Olive", "Sand", "Black"]}
+  - {item_id: "NM-1002", item_name: "Dockyard Waxed Backpack", category: "Bags", price: 148.00, variants: ["Navy", "Brown"]}
+  - {item_id: "NM-2001", item_name: "Ridgeline Merino Crew", category: "Knitwear", price: 96.00, variants: ["Heather Grey", "Charcoal", "Rust"]}
+  - {item_id: "NM-2002", item_name: "Harbour Cable Knit", category: "Knitwear", price: 124.50, variants: ["Cream", "Navy"]}
+  - {item_id: "NM-3001", item_name: "Trailhead Chore Jacket", category: "Outerwear", price: 189.00, variants: ["Olive", "Slate"]}
+  - {item_id: "NM-3002", item_name: "Stormline Shell", category: "Outerwear", price: 265.00, variants: ["Black", "Forest"]}
+  - {item_id: "NM-4001", item_name: "Blackfell Leather Belt", category: "Accessories", price: 54.00, variants: ["Tan", "Black"]}
+  - {item_id: "NM-4002", item_name: "Copperworks Beanie", category: "Accessories", price: 32.00, variants: ["Charcoal", "Mustard"]}
+  - {item_id: "NM-4003", item_name: "Selkirk Wool Socks", category: "Accessories", price: 18.50, variants: ["Grey", "Navy", "Oatmeal"]}
+  - {item_id: "NM-5001", item_name: "Quarryman Work Trouser", category: "Trousers", price: 112.00, variants: ["Khaki", "Black", "Indigo"]}
+
+# Search terms used by view_search_results.
+search_terms: ["tote bag", "merino", "waxed jacket", "wool socks", "belt", "beanie", "chore coat"]
+
+# Outbound links used by the enhanced-measurement `click` event.
+outbound_links:
+  - "https://gearjournal.example/reviews/northmoor"
+  - "https://www.instagram.com/northmoorsupply"
+
+# ---------------------------------------------------------------------------
+# Pages
+# ---------------------------------------------------------------------------
+# Path and title for each page type. Both are templates; available fields are
+# {brand}, {category}, {category_slug}, {item_name}, {item_slug}, {search_term}
+# and {search_query}, depending on the page type.
+#
+# The page *type* names are a fixed vocabulary, because the funnel semantics
+# attached to them live in code (a pdp emits view_item, a checkout emits
+# begin_checkout, and so on). You can freely change what each one looks like;
+# you cannot yet invent a new type.
+#
+# pdp, cart, checkout and purchased require `ecommerce.enabled: true`.
+# home, plp, blog and search work either way.
+#
+# Default type: pdp, cart, checkout and purchased are removed, and must never
+# come back here. The plp stays: without a shop it is a section page that
+# sends a page_view and no list of products.
+pages:
+  home:
+    path: "/"
+    title: "{brand}"
+  plp:
+    path: "/collections/{category_slug}"
+    title: "{category} | {brand}"
+  search:
+    path: "/search?q={search_query}"
+    title: "Search results | {brand}"
+  blog:
+    path: "/journal/how-we-wax-canvas"
+    title: "How we wax canvas | {brand}"
+
+# ---------------------------------------------------------------------------
+# Tracking
+# ---------------------------------------------------------------------------
+# What the property collects. How *often* optional events fire is mixer.yaml.
+tracking:
+  # Which events this property sends.
+  #
+  # first_visit, session_start, page_view and user_engagement are absent
+  # because GA4 always collects them; they cannot be turned off.
+  #
+  # The first three mirror the enhanced-measurement toggles in the GA4 admin
+  # UI. The rest are the ecommerce funnel, and they are prefix-constrained:
+  # the enabled funnel events must form an unbroken run from the top of
+  #
+  #   view_item -> add_to_cart -> view_cart -> begin_checkout -> purchase
+  #
+  # because a session containing a later step without an earlier one is
+  # exactly what check_funnel_nesting rejects. Turning off view_cart while
+  # purchase is on is refused at load time rather than producing broken data.
+  #
+  # Default type: `ecommerce.enabled: false` already switches off the nine
+  # events of a shop. They are also false here, so the file says it twice.
+  events:
+    scroll: true               # enhanced measurement
+    click: true                # enhanced measurement, outbound clicks
+    view_search_results: true  # enhanced measurement, site search
+    view_item_list: false
+    select_item: false
+    view_item: false
+    add_to_cart: false
+    view_cart: false
+    begin_checkout: false
+    add_shipping_info: false
+    add_payment_info: false
+    purchase: false
+
+  # Parameters added to every event. Real implementations almost always have a
+  # few of these, usually injected by a tag manager.
+  #
+  # Every value below is written in the same small language:
+  #
+  #   literal      site_section: "shop"
+  #   choice       ab_variant:  {choice: [control, treatment]}
+  #                tier:        {choice: {new: 70, vip: 30}}     # weighted
+  #   int_range    cart_size:   {int_range: [1, 8]}
+  #   float_range  cart_value:  {float_range: [10.0, 400.0], round: 2}
+  #   template     landing:     {template: "{page_path}"}
+  #
+  # Any of them may add `present: 0.15` to appear only some of the time.
+  # Template fields: event_name, page_path, page_title, page_location,
+  # page_type, hostname, brand, channel, source, medium, campaign,
+  # user_pseudo_id, ga_session_id, ga_session_number, device_category,
+  # country, currency.
+  #
+  # GA4's own parameter names are reserved and rejected at load time, so you
+  # cannot accidentally overwrite page_location or value.
+  global_params: {}
+  # Example:
+  #   site_section: {template: "{page_type}"}
+  #   ab_variant:   {choice: {control: 50, treatment: 50}}
+
+  # Extra parameters on specific standard events, keyed by event name.
+  params_by_event: {}
+  # Example:
+  #   purchase:
+  #     delivery_method: {choice: [standard, express, click_and_collect]}
+  #   page_view:
+  #     content_group: {choice: {shop: 70, editorial: 30}}
+
+  # Events unique to this property. Each fires on the listed page types with the
+  # given per-page probability. Standard GA4 event names are rejected here.
+  custom_events: []
+  # Example:
+  #   - name: newsletter_signup
+  #     on_page: [blog, home]
+  #     rate: 0.06
+  #     params:
+  #       signup_source: {template: "{page_path}"}
+
+  # User-scoped properties. Values are stable for the lifetime of a visitor and
+  # are attached to every one of their events, as GA4 does.
+  user_properties: {}
+  # Example:
+  #   customer_tier:   {choice: {new: 70, returning: 25, vip: 5}}
+  #   lifetime_orders: {int_range: [0, 12]}

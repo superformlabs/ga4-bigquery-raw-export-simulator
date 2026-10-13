@@ -1,0 +1,31 @@
+# Cloud Build recipe used by infra/deploy-app.sh for BOTH app images.
+#
+# Submitted from the repository root, with infra/app.gcloudignore deciding
+# what is uploaded. The Dockerfile is chosen by substitution, so one file
+# serves apps/api and apps/web:
+#
+#   gcloud builds submit . --config=infra/cloudbuild-app.yaml \
+#     --ignore-file=infra/app.gcloudignore \
+#     --substitutions=_DOCKERFILE=apps/api/Dockerfile,_IMAGE=<image:tag>,_GIT_SHA=<sha>,_API_URL=
+#
+# _API_URL is only consumed by apps/web/Dockerfile; Docker prints a harmless
+# "build-arg not consumed" warning for the API build.
+steps:
+  - name: gcr.io/cloud-builders/docker
+    args:
+      - build
+      - --file=${_DOCKERFILE}
+      - --tag=${_IMAGE}
+      - --build-arg=GIT_SHA=${_GIT_SHA}
+      - --build-arg=API_URL=${_API_URL}
+      - .
+images:
+  - ${_IMAGE}
+substitutions:
+  _DOCKERFILE: apps/api/Dockerfile
+  _IMAGE: ""
+  _GIT_SHA: unknown
+  _API_URL: http://localhost:3001
+options:
+  # Logs go to Cloud Logging only, so the build needs no logs bucket.
+  logging: CLOUD_LOGGING_ONLY
