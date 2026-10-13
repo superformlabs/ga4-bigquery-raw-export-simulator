@@ -22,10 +22,9 @@ export const DOCS_PATH = "/docs";
  * source code" of the welcome text (decision D-90), and the "Source code"
  * link of the top-right corner (decisions D-89 and D-93).
  *
- * The repository is private until it is made public (decision D-88), so only
- * the team can open it until then; everyone else sees GitHub's 404 page. That
- * is accepted (decision D-90), and decision D-93 put the link in the corner
- * without waiting for the repository to be public.
+ * The repository went public on 2026-10-13, after the owner's review
+ * (decision D-88), so anyone can open it. Decision D-93 put the link in the
+ * corner without waiting for that.
  */
 export const SOURCE_CODE_URL = "https://github.com/superformlabs/ga4-bigquery-raw-export-simulator";
 

@@ -36,18 +36,18 @@ const SUPPORT_EMAIL = "support@superformlabs.eu";
 /**
  * Mirrors `BUG_REPORT_URL` in `apps/web/lib/wording.ts`. Keep the two in step.
  *
- * Empty today, as it is in the app: the public repository has no bug form
- * yet. While it is empty, "Report a bug" opens an email to `SUPPORT_EMAIL`.
- * Fill it with the address of the form and the link opens that instead, in a
- * new tab, and nothing else here changes.
+ * The bug-report form of the public repository, which went public on
+ * 2026-10-13 (decision D-88). Set here as it is in the app, so "Report a bug"
+ * opens the form in a new tab. Empty it and the link opens an email to
+ * `SUPPORT_EMAIL` instead, and nothing else here changes.
  *
- * The address it is filled with already carries a question mark and one
- * parameter, `?template=bug-report.yml`, which names the form and is required
+ * The address carries a question mark and one parameter already,
+ * `?template=bug-report.yml`, which names the form and is required
  * (`docs/contracts/bug-form.md`). So `page` is added to it with `&`, never
  * with a second `?`. The form is given the page and nothing else, and never a
  * project ID or a dataset name: the site never knows them.
  */
-const BUG_REPORT_URL = "";
+const BUG_REPORT_URL = "https://github.com/superformlabs/ga4-bigquery-raw-export-simulator/issues/new?template=bug-report.yml";
 
 /** Mirrors `SOURCE_CODE_URL` in `apps/web/lib/links.ts`. Keep the two in step. */
 const REPOSITORY_URL = "https://github.com/superformlabs/ga4-bigquery-raw-export-simulator";

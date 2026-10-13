@@ -159,7 +159,7 @@ and not before, so no other page got slower.
   "Open the app" is plain HTML on purpose: every link Docusaurus draws itself
   goes through its own router, whose base is `baseUrl`, so a link to `/`
   would come out pointing back into the site.
-- **At the bottom:** **powered by GA4Dataform**, which opens
+- **At the bottom:** **Powered By GA4Dataform**, which opens
   `https://ga4dataform.com/` in a new tab, as the bottom of every screen of
   the app does.
 
@@ -170,8 +170,8 @@ They are named constants at the top of `docusaurus.config.ts`, and they are
 
 | Constant here | Its twin in the app | What it is |
 |---|---|---|
-| `SUPPORT_EMAIL` | `SUPPORT_EMAIL` in `apps/web/lib/wording.ts` | Where a bug report goes while there is no form |
-| `BUG_REPORT_URL` | `BUG_REPORT_URL` in `apps/web/lib/wording.ts` | The bug form. Empty today, in both places |
+| `SUPPORT_EMAIL` | `SUPPORT_EMAIL` in `apps/web/lib/wording.ts` | Where a bug report goes while `BUG_REPORT_URL` is empty |
+| `BUG_REPORT_URL` | `BUG_REPORT_URL` in `apps/web/lib/wording.ts` | The public bug form, set in both places since 2026-10-13 |
 | `REPOSITORY_URL` | `SOURCE_CODE_URL` in `apps/web/lib/links.ts` | This repository |
 
 **Change one and change its twin, in the same pull request.** A shared module
@@ -181,13 +181,13 @@ the image, so nothing here can import from there.
 
 "Report a bug" behaves as the app's own link does:
 
-- While `BUG_REPORT_URL` is empty, it opens an email to `SUPPORT_EMAIL`, with
-  the app's subject and the app's two questions, and the page named as
-  `documentation site`. In the **same tab**, as in the app: a mail link in a
-  new tab leaves an empty tab behind.
-- Fill `BUG_REPORT_URL` and the link opens that address instead, in a new tab,
-  with `page` filled in and nothing else. Never a project ID and never a
-  dataset name: the site knows neither, and a public form is readable by
-  everyone. The address it is filled with already carries a question mark and
-  `template=bug-report.yml`, which names the form and is required, so `page`
-  is joined to it with `&`.
+- `BUG_REPORT_URL` is set, so the link opens the bug-report form of this
+  repository in a new tab, with `page` filled in as `documentation site` and
+  nothing else. Never a project ID and never a dataset name: the site knows
+  neither, and a public form is readable by everyone. The address carries a
+  question mark and `template=bug-report.yml` already, which names the form
+  and is required, so `page` is joined to it with `&`.
+- Empty `BUG_REPORT_URL` and the link opens an email to `SUPPORT_EMAIL`
+  instead, with the app's subject and the app's two questions, and the page
+  named as `documentation site`. In the **same tab**, as in the app: a mail
+  link in a new tab leaves an empty tab behind.

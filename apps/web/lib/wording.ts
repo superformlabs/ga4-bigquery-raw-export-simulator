@@ -10,29 +10,40 @@ import type { InstallStatus } from "./contract";
 export const SUPPORT_EMAIL = "support@superformlabs.eu";
 
 /**
- * Where "Report a bug" leads (decision D-77). One setting, meant for the
- * new-issue page of a public GitHub repository. That repository does not
- * exist yet, so the setting is empty, and while it is empty the link opens an
- * email to `SUPPORT_EMAIL` instead.
+ * Where "Report a bug" leads (decisions D-77 and D-88). One setting: the
+ * address of the bug-report form of the public repository, which went public
+ * on 2026-10-13. The contract is `docs/contracts/bug-form.md`, and this is
+ * the address it gives, `template=bug-report.yml` included; without that
+ * parameter GitHub shows the list of forms instead of the form.
  *
- * When it is set, the link opens that address and **nothing is added to it**.
- * An issue of a public repository is readable by everyone, so a project ID or
- * a dataset name put there would be published. What a GitHub issue is
- * pre-filled with is decided when the repository exists (decision D-77).
+ * When it is set, the link opens the form with the page the visitor is on,
+ * and with nothing else (decision D-88). An issue of a public repository is
+ * readable by everyone, so a project ID or a dataset name put there would be
+ * published.
+ *
+ * While it is empty the link opens an email to `SUPPORT_EMAIL` instead
+ * (decision D-77), which is what it did until the repository was public.
  */
-export const BUG_REPORT_URL: string = "";
+export const BUG_REPORT_URL: string = "https://github.com/superformlabs/ga4-bigquery-raw-export-simulator/issues/new?template=bug-report.yml";
 
 /** Where the visitor is when they report a bug. The project and the dataset are there when the app knows them. */
 export type BugPlace = { page: string; projectId?: string | null; datasetId?: string | null };
 
 /**
- * The address "Report a bug" opens (decision D-77): `BUG_REPORT_URL` as it
- * is, when it is set; otherwise an email to `SUPPORT_EMAIL`, pre-filled with
- * what helps act on a report. The email carries the project and the dataset
- * because only we read it.
+ * The address "Report a bug" opens. When `BUG_REPORT_URL` is set, the public
+ * bug form of decision D-88, pre-filled with the page and with nothing else:
+ * the setting, then `&page=` and the page URL-encoded, the two rules of
+ * `docs/contracts/bug-form.md`. The project and the dataset are left out on
+ * purpose, whatever is passed in: a public issue is readable by everyone. The
+ * caller gives the page without its query (`components/TopLinks.tsx`),
+ * because the app's own address carries `projectId` and `datasetId`.
+ *
+ * While the setting is empty, an email to `SUPPORT_EMAIL` instead (decision
+ * D-77), pre-filled with what helps act on a report. That email carries the
+ * project and the dataset because only we read it.
  */
 export function bugReportHref(place: BugPlace): string {
-  if (BUG_REPORT_URL) return BUG_REPORT_URL;
+  if (BUG_REPORT_URL) return `${BUG_REPORT_URL}&page=${encodeURIComponent(place.page)}`;
   // Two questions for the visitor to answer, then where they were, which saves us asking.
   const lines = ["What happened:", "", "What you expected:", "", `Page: ${place.page}`];
   if (place.projectId) lines.push(`Project: ${place.projectId}`);

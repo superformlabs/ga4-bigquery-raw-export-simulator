@@ -28,19 +28,27 @@ const checked = (value: string | null, re: RegExp) => (value && re.test(value) ?
  * without waiting for the repository to be made public. Its address is
  * `SOURCE_CODE_URL`, written once in `lib/links.ts` and read from there.
  *
- * "Report a bug" opens `BUG_REPORT_URL` when that setting is set, and an email
- * to the support address while it is empty (`bugReportHref` in
- * `lib/wording.ts`). The email names the page the visitor is on, and the
- * project and the dataset when the app knows them.
+ * "Report a bug" opens the public bug form of decision D-88 when
+ * `BUG_REPORT_URL` is set, in a new tab, and an email to the support address
+ * while that setting is empty, in the same tab (`bugReportHref` in
+ * `lib/wording.ts`). Both name the page the visitor is on; only the email
+ * names the project and the dataset, because only we read it.
  */
 export default function TopLinks() {
+  // The form is the live link since 2026-10-13; the email is what stands in its place when the setting is empty.
+  const form = Boolean(BUG_REPORT_URL);
   // Read after every drawing of the links, and not once: the app rewrites its own address as the visitor
-  // answers and as the install takes its names (`history.replaceState`), and the email names the page.
+  // answers and as the install takes its names (`history.replaceState`), and the link names the page.
   const [place, setPlace] = useState<Place>(NOWHERE);
   useEffect(() => {
-    if (BUG_REPORT_URL) return;
-    const page = window.location.href;
+    // The form is given the address without its query, because the app's own address carries `projectId`
+    // and `datasetId` and a public issue is readable by everyone (`docs/contracts/bug-form.md`).
+    const page = form ? window.location.origin + window.location.pathname : window.location.href;
     if (page === place.page) return;
+    if (form) {
+      setPlace({ page, projectId: null, datasetId: null });
+      return;
+    }
     const q = new URLSearchParams(window.location.search);
     setPlace({ page, projectId: checked(q.get("projectId"), PROJECT_ID_RE), datasetId: checked(q.get("datasetId"), DATASET_ID_RE) });
   });
@@ -55,9 +63,10 @@ export default function TopLinks() {
         <GitHubMark />
         Source code<span className="sr"> (opens in a new tab)</span>
       </a>
-      <a href={bugReportHref(place)}>
+      <a href={bugReportHref(place)} target={form ? "_blank" : undefined} rel={form ? "noopener noreferrer" : undefined}>
         <BugMark />
         Report a bug
+        {form ? <span className="sr"> (opens in a new tab)</span> : null}
       </a>
     </nav>
   );
