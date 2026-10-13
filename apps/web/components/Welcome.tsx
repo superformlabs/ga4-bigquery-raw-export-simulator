@@ -38,13 +38,14 @@ export default function Welcome({ returnTo, errorCode = null, ended = null }: Pr
   const advice = errorCode ? (SIGN_IN_ADVICE[errorCode] ?? ["The sign-in did not complete", `Sign in again. If it keeps failing, please report it to ${SUPPORT_EMAIL}, with this code: ${errorCode}`]) : null;
 
   return (
-    // The title is one short line since decision D-90, read from the left, its left edge on the left edge
-    // of the text under it. Two sets of words of the welcome text are links, both opened in a new tab:
-    // "read the documentation" goes to the documentation site at /docs (decisions D-82 and D-87), and
-    // "open source code" to the public repository (decision D-90).
+    // The title is the full name of the app on two lines since decision D-93, drawn at one font size with
+    // both edges on the edges of the text column under it (`components/FitTitle.tsx`). Two sets of words of
+    // the welcome text are links, both opened in a new tab: "read the documentation" goes to the
+    // documentation site at /docs (decisions D-82 and D-87), and "open source code" to the public
+    // repository (decision D-90).
     <Screen
-      title={WELCOME_TITLE}
-      titleLeft
+      title={WELCOME_TITLE.join(" ")}
+      lines={WELCOME_TITLE}
       subtitle={SUBTITLES.welcome}
       subtitleLinks={[
         { text: WELCOME_DOCS_LINK, href: DOCS_PATH },

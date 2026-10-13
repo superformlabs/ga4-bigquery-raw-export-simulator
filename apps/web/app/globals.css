@@ -49,10 +49,20 @@ main {
   padding: 96px 24px 96px;
   text-align: center;
 }
-/* On a phone the two links in the top-right corner sit higher, so the title may start higher too. */
+/* On a phone the three links in the top-right corner sit higher, so the title may start higher too. */
 @media (max-width: 560px) {
   main {
     padding-top: 64px;
+  }
+}
+/* Under 400 px wide the three links of the top-right corner may take two lines instead of one
+   (`.toplinks` below): a band 62 px high in the place of 36 px, reaching 68 px from the top of the screen
+   in the place of 42 px. 84 px leaves 16 px between the links and the title, so the links never lie on it.
+   Over 400 px the three fit on one line in every font measured, with about 60 px to spare in the widest of
+   them, so nothing there needs this. */
+@media (max-width: 400px) {
+  main {
+    padding-top: 84px;
   }
 }
 
@@ -165,22 +175,42 @@ main.entry .rest {
     opacity: 1;
   }
 }
-/* The welcome title, one short line read from the left (decision D-90). It
-   takes the 600 px column of `.sub.many`, so its left edge is the left edge
-   of the text under it, as it was under decision D-83. One font size, written
-   here and no longer measured in the browser: the title is short, and sizing
-   it to fill the column would blow it up.
+/* The welcome title, on the two lines of decision D-93, at one font size and
+   with both edges straight. The column is the 600 px one of `.sub.many`, so
+   the left edge of the title is the left edge of the text under it and so is
+   its right edge: the size makes the longer line fill the column exactly, and
+   the shorter line is spread with wider letter spacing until it reaches the
+   right edge too (`components/FitTitle.tsx`).
 
-   44 px is the title size of the app, a little under the 50 px a long title
-   may reach, so that "Welcome to GA4BQRES!" stays inside the column in every
-   font a visitor's system may use. 6vw shrinks it on a narrow phone; below
-   30 px it stops shrinking and wraps instead, which only a very narrow screen
-   reaches. It is never wider than the column: the words wrap first. */
-h1.left {
+   Neither the size nor the spacing is written here: both are measured in the
+   visitor's browser, because no font file is loaded and the visitor's own font
+   decides how wide the words are. The size below is only what a line is drawn
+   at before the measurement, which happens before the first paint, so it is
+   never seen. Filling the column with these two lines takes about 60 px in a
+   common font, well above the 44 px of decision D-90; 11vw shrinks it with the
+   column on a phone, where the two lines stay. */
+h1.fitted {
   max-width: 600px;
   margin: 0 auto 16px;
   text-align: left;
-  font-size: clamp(30px, 6vw, 44px);
+}
+h1.fitted .lines {
+  display: block;
+}
+h1.fitted .line {
+  display: block;
+  white-space: nowrap;
+  line-height: 1.06;
+  font-size: clamp(26px, 11vw, 62px);
+  /* The only letter spacing on these lines is the measured one: the -0.015em of `h1` above would be counted
+     twice, once in the measurement and once in the spacing worked out from it. */
+  letter-spacing: normal;
+}
+/* As wide as its words, so that the measurement reads the words and not the column. It carries the
+   measured letter spacing, and the negative right margin that takes back the space added after its last
+   letter (`components/FitTitle.tsx`), so the line stops at the edge of the column. */
+h1.fitted .ink {
+  display: inline-block;
 }
 
 /* The subtitle: one grey sentence under the title (decision D-37). Its measure
@@ -519,7 +549,7 @@ button.backarrow:hover {
   color: var(--ink);
   background: var(--soft);
 }
-/* ---------- "powered by GA4Dataform", at the bottom centre (decision D-86) ----------
+/* ---------- "Powered By GA4Dataform", at the bottom centre (decision D-86) ----------
    On every screen, in line with the back arrow of the bottom-left corner and "Sign out" of the
    bottom-right one: the same 20 px from the bottom, the same 44 px high, the same grey. Smaller than those
    words, because it is not part of the flow. On a page higher than the screen the three leave the screen
@@ -554,10 +584,11 @@ footer.powered a:focus {
   color: var(--muted);
   text-decoration: none;
 }
-/* ---------- The two links in the top-right corner (decision D-77) ----------
-   On every screen, the welcome page included: a book with the words "Documentation", and a beetle with the
-   words "Report a bug". The grey, the size of the letters and the weight of "Sign out" in the corner below. No
-   underline and no effect under the mouse. They stay on the screen, and never move to the page. */
+/* ---------- The three links in the top-right corner (decisions D-77 and D-89) ----------
+   On every screen, the welcome page included: a book with the words "Documentation", GitHub's mark with the
+   words "Source code", and a beetle with the words "Report a bug". The grey, the size of the letters and the
+   weight of "Sign out" in the corner below. No underline and no effect under the mouse. They stay on the
+   screen, and never move to the page. */
 .toplinks {
   position: fixed;
   top: 10px;
@@ -589,16 +620,43 @@ footer.powered a:focus {
   color: var(--muted);
   text-decoration: none;
 }
-/* On a phone the two links keep their words, closer to each other and to the edge. */
+/* On a phone the three links keep their words, closer to each other and closer to the edge. The third link
+   of decision D-89 made the row too wide for a phone: at 14 px it needed about 376 px with Arial's widths
+   and about 391 px with Noto Sans', so "Report a bug" was cut off the right edge of a 320, 360 or 375 px
+   screen. Smaller words, smaller marks and tighter gaps bring the row down to about 327 px with Arial and
+   about 340 px with Noto Sans, counted the same way, which fits 360 px and 375 px with room to spare; see
+   the arithmetic in `README.md`.
+
+   The row also wraps now, from the right: it is stretched from the left edge to 10 px from the right one,
+   its links are pushed to the right end, and a row that still does not fit puts its last link on a second
+   line instead of past the edge of the screen. So on a 320 px screen the three read as "Documentation" and
+   "Source code", then "Report a bug" under them, all right-aligned, in the same order and the same grey.
+   Nothing can be cut, whatever font the visitor's phone uses.
+
+   The 6 px of padding on the left is the room the row keeps at the left edge of the screen. It also decides
+   the wrap at 320 px the same way in both fonts measured: without it Arial would be within a pixel of
+   fitting on one line there, and the second line would come and go with the font. */
 @media (max-width: 480px) {
   .toplinks {
     top: 6px;
-    right: 14px;
-    gap: 14px;
+    left: 0;
+    right: 10px;
+    /* 2 px between the two lines when it wraps, 9 px between the links of a line. */
+    gap: 2px 9px;
+    padding: 6px 0 6px 6px;
+    flex-wrap: wrap;
+    justify-content: flex-end;
   }
   .toplinks a {
-    font-size: 14px;
-    gap: 5px;
+    font-size: 13px;
+    gap: 4px;
+    height: 24px;
+  }
+  /* The marks follow the words down, 17 px to 15 px, so each link keeps the look it has on a computer. The
+     size is written here and not in `components/Marks.tsx`, so one mark is not a size of its own. */
+  .toplinks a svg {
+    width: 15px;
+    height: 15px;
   }
 }
 
@@ -622,35 +680,50 @@ footer.powered a:focus {
   border-color: var(--ink);
   font-weight: 600;
 }
-/* The four locations: one row for each, holding the BigQuery location code and nothing else since
-   decision D-90, which took away the name of the place and the grey hint after it (decision D-82, text B).
-   A row, and not the small buttons side by side of the other choices, so that the longest code fits
-   without wrapping. Read from the left, as the list of steps and the settings of Pro are. */
+/* The four locations: four small buttons side by side on one line, centred under the subtitle (decision
+   D-93), in the spirit of `.choices` above, in the place of the four full-width rows of decision D-90. Each
+   holds the BigQuery location code and nothing else, as it has since decision D-90.
+
+   A grid of four equal columns, and not a row of flexible buttons: `1fr` columns in a grid as wide as its
+   content all take the width of the widest button, the one of `australia-southeast1`, so the four have the
+   same width and the longest code never wraps (`white-space: nowrap`). The grid is as wide as it needs,
+   and `main` centres it. */
 .places {
-  display: flex;
-  flex-direction: column;
+  display: inline-grid;
+  grid-template-columns: repeat(4, 1fr);
   gap: 10px;
-  max-width: 600px;
-  margin: 0 auto;
-  text-align: left;
 }
 .places button {
-  width: 100%;
   color: var(--ink);
   background: #fff;
   border: 1px solid var(--field);
   border-radius: 10px;
-  padding: 14px 18px;
-  text-align: left;
-  font-size: 17px;
-  line-height: 1.45;
+  padding: 12px 16px;
+  white-space: nowrap;
+  /* 15 px, under the 18 px of the other small choices, because a location code is twenty letters long: at
+     15 px the four buttons and their gaps take about 800 px, which fits the window of a computer. On a
+     screen too narrow for two of them at that size the code shrinks with the window, so it always fits
+     inside its button. */
+  font-size: clamp(10px, 3.2vw, 15px);
 }
 .places button[aria-pressed="true"] {
   background: var(--soft);
   border-color: var(--ink);
 }
+/* The codes keep the weight they had as rows, and the taken button is marked by its background and its
+   border alone: a heavier code would be wider, and the four columns would all grow on a click. */
 .places button .pick {
   font-weight: 600;
+}
+/* Below this the four do not fit on one line, so they wrap into two rows of two, all four still the same
+   width. Two columns, never "as many as fit": that is what keeps three and one from happening. */
+@media (max-width: 900px) {
+  .places {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .places button {
+    padding: 10px 8px;
+  }
 }
 
 /* The three experiences: an icon and a name, in a bordered button. */

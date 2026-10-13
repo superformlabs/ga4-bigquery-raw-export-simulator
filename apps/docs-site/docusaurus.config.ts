@@ -175,8 +175,9 @@ const config: Config = {
     },
     footer: {
       style: "light",
-      // The words at the bottom centre of every screen of the app (decision D-86).
-      copyright: 'powered by <a href="https://ga4dataform.com/" target="_blank" rel="noopener">GA4Dataform</a>',
+      // The words at the bottom centre of every screen of the app (decision D-86), with the two capital
+      // letters the owner asked for on 2026-10-13 (decision D-93), so the site and the app read the same.
+      copyright: 'Powered By <a href="https://ga4dataform.com/" target="_blank" rel="noopener">GA4Dataform</a>',
     },
   } satisfies Preset.ThemeConfig,
 };

@@ -5,6 +5,7 @@ import { announce } from "@/lib/announce";
 import { logout } from "@/lib/api";
 import { forgetAll } from "@/lib/cache";
 import { dropAllWishes } from "@/lib/wish";
+import FitTitle from "./FitTitle";
 import { AgainArrow, LeftArrow } from "./Marks";
 import Powered from "./Powered";
 import TopLinks from "./TopLinks";
@@ -12,13 +13,16 @@ import TopLinks from "./TopLinks";
 type Props = {
   title: string;
   /**
-   * True on the welcome page alone (decision D-90): the title takes the text
-   * column of the paragraphs under it and is read from the left, so its left
-   * edge is their left edge. It keeps one font size, written in
-   * `app/globals.css` (`h1.left`). Everywhere else the title is one centred
-   * block that wraps by itself.
+   * The title on fixed lines, drawn at one font size with both edges straight
+   * (decision D-93, `components/FitTitle.tsx`): the size fills the text column
+   * of the paragraphs under it, and a shorter line is spread with wider letter
+   * spacing until it reaches the right edge too. The welcome page alone has
+   * them. Without them the title is one centred block that wraps by itself, as
+   * every other screen has it. `title` holds the same words in one string: it
+   * is the heading a screen reader reads, and what the app says when the screen
+   * changes.
    */
-  titleLeft?: boolean;
+  lines?: readonly string[] | null;
   /**
    * One sentence under the title, one fact (decision D-37). A list of
    * sentences is shown as one paragraph for each: that is the welcome text of
@@ -68,13 +72,13 @@ type Props = {
 // Where the design puts the two corners, and the size of the arrow (app/globals.css).
 const CORNER = { side: 24, bottom: 20, size: 44 };
 // What the page may hold: anything the bottom of the screen could lie on.
-const CONTENT = "h1 .w, input, select, button, a, label, li, p, pre, code, [role=listbox]";
+const CONTENT = "h1 .w, h1 .lines, input, select, button, a, label, li, p, pre, code, [role=listbox]";
 
 /**
  * Where the three things at the bottom go (tasks UI-10 and UI-22, decision
  * D-86). The design fixes the back arrow to the bottom-left corner of the
  * screen, the words "Sign out" to the bottom-right one, and since decision
- * D-86 "powered by GA4Dataform" to the bottom centre. The three sit on one
+ * D-86 "Powered By GA4Dataform" to the bottom centre. The three sit on one
  * line. On a page that is higher than the screen, what is fixed lies on
  * whatever scrolls under it. So when the page is higher than the screen and
  * something of the page reaches the band of one of them, all three leave the
@@ -83,9 +87,9 @@ const CONTENT = "h1 .w, input, select, button, a, label, li, p, pre, code, [role
  * case they stay exactly where the design puts them.
  *
  * The words at the bottom centre are on every screen, so this now runs on
- * every screen, where before it slept on a screen without a corner. The two
+ * every screen, where before it slept on a screen without a corner. The three
  * links of the top-right corner are not placed here: they stay on the screen
- * and carry a white background instead (decision D-77).
+ * and carry a white background instead (decisions D-77 and D-89).
  *
  * Returns the distance from the top of the page, or null for the place of
  * the design.
@@ -140,8 +144,8 @@ async function leave() {
 }
 
 /**
- * One screen: the two links in the top-right corner, a title, its subtitle,
- * the rest of the page, and "powered by GA4Dataform" at the bottom centre
+ * One screen: the three links in the top-right corner, a title, its subtitle,
+ * the rest of the page, and "Powered By GA4Dataform" at the bottom centre
  * (decision D-86). The screen appears at once, except on "Choose your
  * experience", which keeps the entry animations of the design (`entry`,
  * decision D-75): there the title falls into place, the subtitle appears while
@@ -149,7 +153,7 @@ async function leave() {
  * one stays in place, one inside it falls. No shadow, on the letters or under
  * them (decision D-37).
  */
-export default function Screen({ title, titleLeft = false, subtitle, subtitleLinks = [], entry = false, onBack, onAgain, signOut = false, liveSubtitle = false, children }: Props) {
+export default function Screen({ title, lines = null, subtitle, subtitleLinks = [], entry = false, onBack, onAgain, signOut = false, liveSubtitle = false, children }: Props) {
   // The paragraphs of a subtitle that is a list of sentences; null for the one sentence of every other screen.
   const paragraphs: readonly string[] | null = typeof subtitle === "object" ? subtitle : null;
   // Said to screen readers when the screen changes: the title, then its subtitle, read as one text.
@@ -165,10 +169,16 @@ export default function Screen({ title, titleLeft = false, subtitle, subtitleLin
       <TopLinks />
       <main className={entry ? "entry" : undefined}>
         <div className="col wide">
-          <h1 className={titleLeft ? "left" : undefined}>
-            <span className="w">
-              <span className="t">{title}</span>
-            </span>
+          {/* On fixed lines the heading is named by `aria-label`: the lines are separate elements, so the
+              accessible name says the full title once, with its words apart as they are written. */}
+          <h1 className={lines ? "fitted" : undefined} aria-label={lines ? title : undefined}>
+            {lines ? (
+              <FitTitle lines={lines} />
+            ) : (
+              <span className="w">
+                <span className="t">{title}</span>
+              </span>
+            )}
           </h1>
           {paragraphs ? (
             <div className="sub many" id="sub">

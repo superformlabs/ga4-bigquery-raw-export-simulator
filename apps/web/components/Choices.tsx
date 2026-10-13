@@ -14,9 +14,11 @@ type Props = {
   /**
    * "modes": the three experiences, each an icon and a name in a larger
    * button; the hint is said to screen readers and not shown.
-   * "places": the four locations, one row each. Since decision D-90 a row
-   * reads the BigQuery location code alone, so nothing is shown after the
-   * name and no place carries a hint any more.
+   * "places": the four locations, four small buttons of the same width, side
+   * by side on one line and two by two on a narrow phone (decision D-93, in
+   * the place of the four full-width rows of decision D-90). Since decision
+   * D-90 a button reads the BigQuery location code alone, so nothing is shown
+   * after the name and no place carries a hint any more.
    */
   look?: "choices" | "modes" | "places";
 };

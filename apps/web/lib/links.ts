@@ -20,10 +20,12 @@ export const DOCS_PATH = "/docs";
  * copy of this app, published under the MIT licence. Written here once, so
  * that every place that links to it says the same address: the words "open
  * source code" of the welcome text (decision D-90), and the "Source code"
- * link of the top-right corner (decision D-89), which is not built yet.
+ * link of the top-right corner (decisions D-89 and D-93).
  *
- * The repository is still private, so the link shows GitHub's 404 page until
- * it is made public. That is accepted (decision D-90).
+ * The repository is private until it is made public (decision D-88), so only
+ * the team can open it until then; everyone else sees GitHub's 404 page. That
+ * is accepted (decision D-90), and decision D-93 put the link in the corner
+ * without waiting for the repository to be public.
  */
 export const SOURCE_CODE_URL = "https://github.com/superformlabs/ga4-bigquery-raw-export-simulator";
 

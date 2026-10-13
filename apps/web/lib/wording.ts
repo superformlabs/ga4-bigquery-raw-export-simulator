@@ -81,17 +81,26 @@ export const LABELS = {
 } as const;
 
 /**
- * The welcome title (decision D-90): the short name of the app, and one
- * exclamation mark. It fits on one line, so the two lines of decisions D-81
- * and D-83 are gone, and with them the size measured in the browser. One
- * font size, written in `app/globals.css` (`h1.left`), and a left edge that
- * lines up with the left edge of the text under it.
+ * The welcome title (decision D-93): the full name of the app, on two lines.
+ * Line one, then line two. "Welcome to GA4BQRES!" of decision D-90 is gone,
+ * and the full name is the title again, as it was under decisions D-81 and
+ * D-83.
  *
- * The full name, "GA4 BigQuery Raw Export Simulator", stays everywhere else:
- * the browser tab title (`app/layout.tsx`) and the first words of the welcome
- * text below.
+ * Both lines are drawn at one font size, the size that makes the longer of
+ * them fill the width of the text column, and the shorter line is spread with
+ * wider letter spacing until it reaches the right edge too
+ * (`components/FitTitle.tsx`). So both edges of the title are straight: its
+ * left edge is the left edge of the text under it, and so is its right edge.
+ *
+ * The break is after "Raw", and not after "BigQuery", because it is the one
+ * that needs the least spreading of the shorter line: about 0.07 em of extra
+ * spacing per letter, against about 0.32 em for the other (measured on the
+ * app's font stack, decision D-93).
+ *
+ * The full name also stays in the browser tab title (`app/layout.tsx`) and in
+ * the first words of the welcome text below.
  */
-export const WELCOME_TITLE = "Welcome to GA4BQRES!";
+export const WELCOME_TITLE = ["GA4 BigQuery Raw", "Export Simulator"] as const;
 
 /**
  * The welcome text, in the owner's words (decision D-82, text A). Two

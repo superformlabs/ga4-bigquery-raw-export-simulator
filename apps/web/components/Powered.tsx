@@ -16,9 +16,11 @@ type Props = {
 };
 
 /**
- * "powered by GA4Dataform", small and grey, at the bottom centre of every
+ * "Powered By GA4Dataform", small and grey, at the bottom centre of every
  * screen (decision D-86). A yellow lightning flash (decision D-90,
- * `BoltMark`), then the words, which stay grey. It opens
+ * `BoltMark`, 18 px since decision D-93), then the words, which stay grey.
+ * The words were "powered by GA4Dataform" until decision D-93, where the
+ * owner asked for the two capital letters. It opens
  * `https://ga4dataform.com/` in a new tab, so a visitor in the middle of an
  * install never loses their place.
  *
@@ -30,7 +32,7 @@ export default function Powered({ low = false, style }: Props) {
     <footer className={`powered${low ? " low" : ""}`} style={style}>
       <a href={GA4DATAFORM_URL} target="_blank" rel="noopener noreferrer">
         <BoltMark />
-        powered by GA4Dataform<span className="sr"> (opens in a new tab)</span>
+        Powered By GA4Dataform<span className="sr"> (opens in a new tab)</span>
       </a>
     </footer>
   );
