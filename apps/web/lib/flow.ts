@@ -9,7 +9,7 @@ export type Screen = "mode" | "project" | "type" | "location" | "refresh" | "his
 
 const MODES: readonly string[] = ["guided", "auto", "pro"];
 const SCREENS: readonly string[] = ["mode", "project", "type", "location", "refresh", "history", "pro"];
-const TYPES: readonly string[] = ["default", "ecommerce"];
+const TYPES: readonly string[] = ["default", "ecommerce", "eu-consent", "lead-generation"];
 
 export const PROJECT_ID_RE = /^[a-z][a-z0-9-]{4,28}[a-z0-9]$/;
 export const DATASET_ID_RE = /^[A-Za-z0-9_]{1,1024}$/;
@@ -58,9 +58,23 @@ export const REFRESH_CHOICES = [
   { id: "no", label: "No" },
 ] as const;
 
+/**
+ * The four types of dataset (decisions D-96 and D-97, api.md v2.3), in place
+ * of the two of decision D-23. Each `id` is the value the install spec
+ * carries, and the name of the configuration folder. Each `label` is the name
+ * a visitor reads; messages that name a type use that name, never the value.
+ *
+ * The `hint` is the line under the name, shown inside the button as a second,
+ * smaller line (`look="types"` in `components/Choices.tsx`). The four lines
+ * are the words of decision D-97: since then the four types are one invented
+ * business software website, GA4Dataform's own, seen from four angles. The
+ * owner reviews the words on staging and may change them there.
+ */
 export const TYPE_CHOICES = [
-  { id: "default", label: "Default" },
-  { id: "ecommerce", label: "Ecommerce" },
+  { id: "default", label: "Default", hint: "A business software website: visits, pages, scrolls and searches." },
+  { id: "ecommerce", label: "Ecommerce", hint: "The same software website, where visitors buy plans online, in US dollars." },
+  { id: "eu-consent", label: "EU consent", hint: "The same software website for European visitors, in euros, where close to half refuse analytics cookies." },
+  { id: "lead-generation", label: "Lead generation", hint: "The same software website, where visitors fill in a form to book a demo." },
 ] as const;
 
 /** Pro: the data locations offered. */
@@ -145,7 +159,7 @@ export function wrongValues(q: Params): string[] {
   if (given("projectId") !== null && !d.projectId) say("projectId", "A project ID has 6 to 30 lowercase letters, digits or hyphens.");
   if (given("datasetId") !== null && !d.datasetId) say("datasetId", "A dataset name has only letters, numbers and underscores.");
   if (given("installId") !== null && !INSTALL_ID_RE.test(String(given("installId")))) say("installId", "The number of an install has 6 to 12 digits or lowercase letters.");
-  if (given("datasetType") !== null && !d.datasetType) say("datasetType", "The type is default or ecommerce.");
+  if (given("datasetType") !== null && !d.datasetType) say("datasetType", "The type is default, ecommerce, eu-consent or lead-generation.");
   if (given("location") !== null && !d.location) say("location", "The location is a BigQuery location such as US, EU or europe-west1.");
   if (given("region") !== null && !d.region) say("region", "The region is a Google Cloud region such as us-central1.");
   if (given("historyDays") !== null && d.historyDays === null) say("historyDays", "The days of history are a whole number, 1 or more.");

@@ -1,0 +1,215 @@
+# Scenario: EU and consent-heavy. How much, and how often.
+#
+# The e-commerce scenario's behaviour, sold across Europe: the same business
+# software website, in euros (decision D-97). The point of the scenario is
+# consent: only 55% of visitors grant analytics storage, and 70%
+# of those grant ads storage, so close to half of all rows have no
+# user_pseudo_id, no ga_session_id and no session attribution. Models that
+# count users or sessions, or attribute conversions, have to cope with that.
+#
+# Run it with:
+#
+#   ga4synth summary --scenario eu-consent --date 2026-09-01
+#
+# Comments here cover what is distinctive about this scenario. Every setting is
+# documented in full in config/ecommerce/mixer.yaml.
+
+volume:
+  new_visitors_per_day: 900
+  weekday_factor: {1: 1.04, 2: 1.06, 3: 1.05, 4: 1.02, 5: 0.95, 6: 0.82, 7: 0.9}
+  # Software budgets peak in late autumn, before the year closes.
+  seasonality: {amplitude: 0.3, peak_day_of_year: 325}
+  jitter: 0.07
+
+retention:
+  window_days: 120
+  return_base: 0.07
+  return_curve:
+    - {weight: 0.45, decay_days: 3}
+    - {weight: 0.55, decay_days: 35}
+
+intent:
+  segments:
+    browsing:    {weight: 70, return_factor: 0.55, conversion_factor: 0.6}
+    considering: {weight: 24, return_factor: 2.2,  conversion_factor: 1.6}
+    ready:       {weight: 6,  return_factor: 1.0,  conversion_factor: 2.6}
+  session_number_conversion_factor: [0.4, 0.9, 1.5]
+  channel_segment_weights:
+    paid_social:    {browsing: 30, considering: 66, ready: 4}
+    organic_social: {browsing: 35, considering: 62, ready: 3}
+    email:          {browsing: 35, considering: 40, ready: 25}
+  device_conversion_factor: {desktop: 1.3, mobile: 0.8}
+
+demand:
+  weekday_conversion_factor: {1: 1.04, 2: 1.06, 3: 1.05, 4: 1.02, 5: 0.97, 6: 0.9, 7: 0.96}
+  drift: {sigma: 0.2, period_days: 10}
+  daily_noise: 0.15
+
+# The European year of a software company: the new budget year in January,
+# the summer release, Black Friday on the plans, and the renewals that close
+# the year. The weekly product update goes out on Thursday.
+calendar:
+  - {name: product-update, weekday: 4, channels: {email: 3.0}, new_visitors_only: false, returns: 1.2, conversion: 1.03}
+  - name: new-year-plans
+    from: "01-07"
+    to: "01-31"
+    traffic: 1.15
+    conversion: 1.3
+    channels: {email: 2.0, paid_social: 1.6}
+    new_visitors_only: false
+    campaigns: {email: new-year-plans, paid_social: new-year-plans}
+  - name: summer-release
+    from: "06-25"
+    to: "07-20"
+    traffic: 1.1
+    conversion: 1.25
+    channels: {email: 1.8, paid_social: 1.5}
+    new_visitors_only: false
+    campaigns: {email: summer-release, paid_social: summer-release}
+  - name: black-friday
+    from: "11-24"
+    to: "12-01"
+    traffic: 1.4
+    returns: 1.5
+    conversion: 1.5
+    channels: {email: 2.5, paid_social: 2.0, paid_search: 1.6}
+    new_visitors_only: false
+    campaigns: {email: black-friday, paid_social: black-friday, paid_search: black-friday}
+  - name: year-end-renewals
+    from: "12-02"
+    to: "12-20"
+    traffic: 1.2
+    conversion: 1.2
+    channels: {paid_search: 1.4, paid_social: 1.4}
+    new_visitors_only: false
+    campaigns: {paid_search: year-end-renewals, paid_social: year-end-renewals}
+
+acquisition:
+  gclid_only_share: 0.3
+  calendar_campaign_share: 0.75
+  last_non_direct_lookback_days: 30
+  device_channel_skew:
+    mobile: {paid_social: 1.8, organic_social: 1.8}
+
+server_side:
+  purchase_share: 0.05
+  confirmation_delay_seconds: [20, 900]
+  offline_orders:
+    enabled: true
+    daily_rate: 0.0002
+    decay_days: 45
+    session_id_share: 0.0
+    line_item_weights: {1: 75, 2: 20, 3: 5}
+
+session:
+  hour_weights:
+    [0.2, 0.12, 0.08, 0.06, 0.06, 0.1, 0.22, 0.45, 0.7, 0.9, 0.98, 0.98,
+     0.95, 0.96, 0.95, 0.92, 0.9, 0.9, 0.95, 1.0, 0.98, 0.85, 0.6, 0.35]
+  event_gap_seconds: [3, 45]
+  batch_window_seconds: 5
+  engaged_min_page_views: 2
+  engaged_min_seconds: 10
+  source_change_rate: 0.12
+  missing_session_start_rate: 0.02
+  extra_sessions:
+    weights: {0: 79, 1: 15, 2: 6}
+    gap_minutes: [120, 360]
+
+# The reason for this scenario.
+consent:
+  enabled: true
+  analytics_granted: 0.55
+  ads_granted: 0.7
+
+identity:
+  user_id_share: 0.35
+  cross_device_share: 0.15
+  cross_device_max_lag_days: 14
+  cross_device_device_mix: {desktop: 65, mobile: 30, tablet: 5}
+
+channel_mix:
+  organic_search: 32
+  direct: 22
+  paid_search: 15
+  paid_social: 12
+  organic_social: 8
+  email: 7
+  referral: 4
+
+device_mix:
+  desktop: 38
+  mobile: 56
+  tablet: 6
+
+geo_mix:
+  de_berlin: 26
+  fr_paris: 15
+  nl_amsterdam: 10
+  es_madrid: 8
+  it_milan: 7
+  se_stockholm: 5
+  dk_copenhagen: 4
+  at_vienna: 4
+  ch_zurich: 3
+  pl_warsaw: 4
+  cz_prague: 2
+  pt_lisbon: 2
+  fi_helsinki: 2
+  no_oslo_municipality: 2
+  uk_london: 6
+
+returning_channel_skew:
+  direct: 3.0
+  email: 2.5
+  paid_search: 1.4
+  paid_social: 0.4
+  organic_social: 0.5
+
+# The walk of config/ecommerce/: the same website, the same pages. European
+# visitors read the blog a little more and search a little less.
+journey:
+  entry_weights:
+    home: 20
+    plp: 22
+    pdp: 24
+    pricing: 9
+    features: 5
+    docs: 6
+    search: 6
+    blog: 5
+    login: 3
+  transitions:
+    home:     {plp: 21, pdp: 9, pricing: 10, features: 5, docs: 2, blog: 1, search: 4, end: 48}
+    features: {pricing: 11, plp: 13, pdp: 10, features: 3, docs: 4, home: 1, search: 3, end: 55}
+    docs:     {docs: 6, features: 4, pricing: 6, plp: 5, pdp: 3, home: 2, blog: 1, search: 1, end: 72}
+    pricing:  {plp: 26, pdp: 17, features: 2, login: 3, home: 1, docs: 1, end: 50}
+    plp:      {pdp: 38, plp: 6, home: 2, search: 2, end: 52}
+    pdp:      {pdp: 9, cart: 19, plp: 8, home: 2, end: 62}
+    search:   {pdp: 25, plp: 12, docs: 3, features: 2, search: 2, blog: 1, end: 55}
+    blog:     {home: 4, pdp: 5, plp: 4, docs: 2, features: 3, search: 1, end: 81}
+    login:    {home: 4, pricing: 3, docs: 2, plp: 3, end: 88}
+    cart:     {checkout: 56, pdp: 5, plp: 2, end: 37}
+    checkout: {purchased: 69, cart: 4, end: 27}
+    purchased: {end: 100}
+  add_to_cart_rate: 0.16
+  scroll_rate: 0.22
+  outbound_click_rate: 0.012
+  max_pages: 24
+
+cart:
+  max_line_items: 3
+  quantity_weights: {1: 78, 2: 17, 3: 5}
+
+dwell_seconds:
+  page_load: [0.2, 1.5]
+  select_item: [2, 18]
+  view_item: [1, 4]
+  add_to_cart: [2, 20]
+  add_shipping_info: [8, 40]
+  add_payment_info: [6, 30]
+  scroll: [2, 15]
+  outbound_click: [1, 10]
+  custom_event: [1, 12]
+
+scroll_depth_percent: 90
+server_offset_micros: [200000, 4000000]

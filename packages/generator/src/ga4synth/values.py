@@ -118,7 +118,7 @@ def validate_spec(spec: Any, where: str) -> None:
         template = spec["template"]
         if not isinstance(template, str):
             raise ValueSpecError(f"{where}: template must be a string")
-        for field in _template_fields(template):
+        for field in template_fields(template):
             if field not in TEMPLATE_KEYS:
                 raise ValueSpecError(
                     f"{where}: template references unknown field {{{field}}}; "
@@ -137,7 +137,7 @@ def validate_spec(spec: Any, where: str) -> None:
             raise ValueSpecError(f"{where}: present must be a probability between 0 and 1")
 
 
-def _template_fields(template: str) -> list[str]:
+def template_fields(template: str) -> list[str]:
     """Extract ``{field}`` names from a template string."""
     fields, depth, current = [], 0, []
     for char in template:

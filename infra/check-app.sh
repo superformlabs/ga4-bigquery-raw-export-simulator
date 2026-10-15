@@ -36,7 +36,9 @@
 #       environment (infra/env/<ENV>.env)
 #   13. the generator image the api service gives to new installs is the one
 #       named in infra/IMAGE (dev) or infra/IMAGE.<ENV>, and that image holds
-#       the two types of dataset (read from the registry, no credentials)
+#       the four types of dataset (read from the registry, no credentials).
+#       This check passes only once an image built with the four
+#       configurations is live (api.md v2.3, decision D-96)
 #
 # Ends with exit code 0 when every check passes, 1 otherwise.
 
@@ -166,6 +168,8 @@ done
 
 # Every job the backend installs names /app/config/<type>/ (api.md v1.8), so
 # the image it hands out must hold the types, or the jobs stop at start.
+# Since api.md v2.3 there are four of them (decisions D-96 and D-97), the
+# same list as CONFIG_TYPES in infra/build.sh.
 echo "--- generator image given to new installs"
 SERVICE_IMAGE="$(printf '%s' "${SERVICE_ENV}" | python3 -c '
 import json, sys
@@ -182,11 +186,19 @@ if [[ -n "${SERVICE_IMAGE}" && "${SERVICE_IMAGE}" == "${WANTED_IMAGE}" ]]; then
 else
   fail "GENERATOR_IMAGE is '${SERVICE_IMAGE}' on the service, ${IMAGE_PATH##*/} says '${WANTED_IMAGE}'"
 fi
-if [[ -n "${SERVICE_IMAGE}" ]] && image_read "${SERVICE_IMAGE}" \
-    && image_holds_type default && image_holds_type ecommerce; then
+WANTED_TYPES=(default ecommerce eu-consent lead-generation)
+WANTED_TYPES_LIST="$(IFS=,; printf '%s' "${WANTED_TYPES[*]}")"
+HOLDS_TYPES=0
+if [[ -n "${SERVICE_IMAGE}" ]] && image_read "${SERVICE_IMAGE}"; then
+  HOLDS_TYPES=1
+  for wanted_type in "${WANTED_TYPES[@]}"; do
+    if ! image_holds_type "${wanted_type}"; then HOLDS_TYPES=0; fi
+  done
+fi
+if (( HOLDS_TYPES == 1 )); then
   ok "that image holds the types ${IMAGE_TYPES}"
 else
-  fail "the image '${SERVICE_IMAGE}' does not name the types default and ecommerce (it names '${IMAGE_TYPES:-}')"
+  fail "the image '${SERVICE_IMAGE}' does not name the types ${WANTED_TYPES_LIST} (it names '${IMAGE_TYPES:-}')"
 fi
 
 echo

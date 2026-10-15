@@ -9,6 +9,25 @@ The tool builds a fake Google Analytics 4 export in BigQuery: the daily
 invented traffic for an invented website. You can query it, join it, break it
 and rebuild it, and no real person's data is anywhere in it.
 
+## The four types of dataset
+
+The invented website is always the same one: GA4Dataform's own software
+website, on `ga4dataform.com`. You choose which part of it your dataset
+simulates. Pick a type on the Guided path, or in the list on the Pro screen.
+The Automated path always installs Default.
+
+| Type | What it simulates |
+|---|---|
+| Default | The software website with no shop. Visits, pages, scrolls and site searches, and no event of a purchase. The simplest place to start. |
+| Ecommerce | The same website, where visitors buy plans online in US dollars. The whole shop funnel, from looking at a plan to paying for it. |
+| EU consent | The same website for European visitors, in euros. Close to half of them refuse analytics cookies, so close to half of the rows carry no visitor and no session. This is what a European property really looks like. |
+| Lead generation | The same website, where visitors fill in a form to book a demo. The lead funnel: starting the form, sending it, and the lead it creates. |
+
+One dataset holds one type. If you want to compare two, install two datasets,
+each with its own name.
+
+## What it creates in your project
+
 To do that it creates these things in the project you choose. Nothing is
 created until every check on the first screen has passed.
 

@@ -7,9 +7,9 @@ code into the app):
   and exercise it in process.
 - the app's integration tests, the other files. They never import `ga4synth`:
   they run the same `ga4synth` command line the container runs (see
-  `docs/contracts/generator-cli.md`), pointed at one of the app's two
-  configurations, so they exercise the package exactly as it is deployed.
-  Every call names its configuration: there is no default one.
+  `docs/contracts/generator-cli.md`), pointed at `default` or `ecommerce`,
+  so they exercise the package exactly as it is deployed. Every call names
+  its configuration: there is no default one.
 
 No test reads the network.
 """
@@ -32,13 +32,26 @@ REPO_ROOT = PACKAGE_DIR.parents[1]
 CONTRACTS_DIR = REPO_ROOT / "docs" / "contracts"
 CONFIG_DIR = PACKAGE_DIR / "config"
 
-# The two types of dataset (decision D-23). The names are also the names of
-# the folders inside the image, /app/config/default and /app/config/ecommerce,
-# and the values of `datasetType` in docs/contracts/api.md.
+# The pair of types the integration tests here run: `default` is `ecommerce`
+# without its shop (decision D-23). Each name is also the name of a folder
+# inside the image, /app/config/default and /app/config/ecommerce, and a
+# value of `datasetType` in docs/contracts/api.md.
 DEFAULT = "default"
 ECOMMERCE = "ecommerce"
 CONFIGURATIONS = (DEFAULT, ECOMMERCE)
 CONFIG_FILES = ("property.yaml", "mixer.yaml")
+
+# The other two types. The app offers these as well, since issues #317, #318
+# and #316 of 2026-10-14 (decision D-96): each is a `datasetType` and
+# `infra/build.sh` puts all four folders in the image. The integration tests
+# here do not run them; the generator's own tests pass every invariant on all
+# four, and test_configurations.py checks that these two load.
+EU_CONSENT = "eu-consent"
+LEAD_GENERATION = "lead-generation"
+OUTSIDE_THE_PAIR = (EU_CONSENT, LEAD_GENERATION)
+
+# Every folder of config/.
+CONFIG_FOLDERS = (*CONFIGURATIONS, *OUTSIDE_THE_PAIR)
 
 # The schema file inside the installed package, relative to the package
 # folder (docs/contracts/ga4-export-schema.md, "Source of truth"). It is the
@@ -55,12 +68,12 @@ FAKE_DATASET = "example-project:analytics_770000001"
 
 
 def property_file(configuration: str) -> Path:
-    assert configuration in CONFIGURATIONS, configuration
+    assert configuration in CONFIG_FOLDERS, configuration
     return CONFIG_DIR / configuration / "property.yaml"
 
 
 def mixer_file(configuration: str) -> Path:
-    assert configuration in CONFIGURATIONS, configuration
+    assert configuration in CONFIG_FOLDERS, configuration
     return CONFIG_DIR / configuration / "mixer.yaml"
 
 

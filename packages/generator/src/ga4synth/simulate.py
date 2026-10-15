@@ -184,13 +184,23 @@ def _session_starts(world: World, cohort: dt.date, index: int, day: dt.date) -> 
 
 
 def _intent(world: World, cohort: dt.date, index: int) -> str:
-    """A visitor's latent purchase-intent segment."""
-    segments = world.intent_segments
+    """A visitor's latent purchase-intent segment.
+
+    ``intent.channel_segment_weights`` can make the segment depend on the
+    channel that first brought the visitor, so that a channel draws browsers
+    and another buyers. The draw itself is the same either way: a visitor
+    whose channel is not listed gets exactly the segment it had without the
+    setting.
+    """
+    weights = {name: seg["weight"] for name, seg in world.intent_segments.items()}
+    by_channel = world.channel_segment_weights
+    if by_channel:
+        weights = by_channel.get(_visitor_draws(world, cohort, index)[2], weights)
     draw = uniform(world.master_seed, "intent", cohort.isoformat(), index)
-    total = sum(seg["weight"] for seg in segments.values())
+    total = sum(weights.values())
     running = 0.0
-    for name, seg in segments.items():
-        running += seg["weight"] / total
+    for name, weight in weights.items():
+        running += weight / total
         if draw < running:
             return name
     return name
@@ -255,7 +265,12 @@ def _consent(world: World, cohort: dt.date, index: int) -> tuple[bool, bool]:
     visitor's identity and holds on every session. A visitor who denies
     analytics storage also denies ads storage. ``consent.ads_granted`` is
     therefore the share of analytics-consenting visitors who grant ads storage.
+
+    With ``consent.enabled: false`` every visitor grants both, whatever the
+    shares say.
     """
+    if not world.consent_enabled:
+        return True, True
     consent = world.section("consent")
     rng = derive(world.master_seed, "consent", cohort.isoformat(), index)
     analytics = rng.random() < float(consent["analytics_granted"])
@@ -310,6 +325,42 @@ def _person_root(world: World, cohort: dt.date, index: int) -> tuple[dt.date, in
     return cohort, index
 
 
+def _visitor_draws(world: World, cohort: dt.date, index: int) -> tuple[dict[str, str], dict[str, str], str]:
+    """The device, geography and first channel of a visitor, from its own stream.
+
+    One sequence of draws, in a fixed order, so that the first channel can be
+    looked up without building the whole visitor.
+    """
+    rng = derive(world.master_seed, "visitor", cohort.isoformat(), index)
+
+    # A second device can have a mix of its own: people discover a shop on
+    # their phone and come back to buy on a computer.
+    device_weights = world.device_weights
+    # The test is the outcome, not the draw: a visitor drawn as a second device
+    # that finds no one to belong to stays a primary device.
+    if world.cross_device_device_weights and _person_root(world, cohort, index) != (cohort, index):
+        device_weights = world.cross_device_device_weights
+    category = weighted_choice(rng, device_weights)
+    device_cfg = world.section("devices")[category]
+    device = {
+        "category": category,
+        "operating_system": rng.choice(device_cfg["os"]),
+        "browser": rng.choice(device_cfg["browser"]),
+        # Real exports leave mobile_brand_name empty for desktop.
+        "mobile_brand_name": rng.choice(device_cfg["brand"]) if device_cfg.get("brand") else "",
+    }
+
+    geo_options, geo_weights = world.geo_choices()
+    geo = rng.choices(geo_options, weights=geo_weights, k=1)[0]
+
+    channel_weights = world.channel_weights_on(cohort)
+    skew = world.device_channel_skew.get(category)
+    if skew:
+        channel_weights = {name: w * skew.get(name, 1.0) for name, w in channel_weights.items()}
+    first_channel = weighted_choice(rng, channel_weights)
+    return device, geo, first_channel
+
+
 def _materialise(world: World, cohort: dt.date, index: int) -> Visitor:
     """Build a visitor's stable attributes.
 
@@ -319,22 +370,7 @@ def _materialise(world: World, cohort: dt.date, index: int) -> Visitor:
     device and its own pseudo id, linked to the first only by a shared
     person_id, which is exactly the shape the export has.
     """
-    rng = derive(world.master_seed, "visitor", cohort.isoformat(), index)
-
-    category = weighted_choice(rng, world.device_weights)
-    device_cfg = world.section("devices")[category]
-    device = {
-        "category": category,
-        "operating_system": rng.choice(device_cfg["os"]),
-        "browser": rng.choice(device_cfg["browser"]),
-        # Real exports leave mobile_brand_name empty for desktop.
-        "mobile_brand_name": rng.choice(device_cfg["brand"]) if "brand" in device_cfg else "",
-    }
-
-    geo_options, geo_weights = world.geo_choices()
-    geo = rng.choices(geo_options, weights=geo_weights, k=1)[0]
-
-    first_channel = weighted_choice(rng, world.channel_weights_on(cohort))
+    device, geo, first_channel = _visitor_draws(world, cohort, index)
 
     first_touch = _session_start_local(world, cohort, index, cohort)
     first_touch_us = int(first_touch.timestamp() * 1_000_000)
@@ -350,7 +386,7 @@ def _materialise(world: World, cohort: dt.date, index: int) -> Visitor:
         first_touch_us=first_touch_us,
         device=device,
         geo=dict(geo),
-        language="en-us" if geo["country"] in ("United States", "Canada", "United Kingdom", "Australia") else "en-gb",
+        language=world.language(geo),
         first_channel=first_channel,
         # 12 digits, for the reason _transaction_id is 12 digits: at 9 the
         # birthday bound puts a collision among this many people at better than
@@ -438,6 +474,8 @@ def _page(world: World, rng, page_type: str, payload: dict[str, Any]) -> tuple[s
             f"page type {page_type!r} has no entry under `pages` in the config"
         )
     template = pages[page_type]
+    if isinstance(template, list):
+        template = template[payload.get("variant", 0)]
 
     fields: dict[str, Any] = {"brand": world.section("property")["brand"]}
     if "category" in payload:
@@ -545,7 +583,10 @@ def build_session(
         * world.intent_segments[visitor.intent]["conversion_factor"]
         * world.day_factors(day).conversion
     )
+    if (world.raw.get("intent") or {}).get("device_conversion_factor"):
+        conversion *= world.device_conversion_factor(visitor.device["category"])
     transitions, add_to_cart_rate = world.scaled_journey(conversion)
+    form_start_rate = world.form_start_rate(conversion)
     server = world.server_side
     server_share = float(server.get("purchase_share", 0.0))
     analytics_granted, ads_granted = _consent(world, visitor.cohort, visitor.index)
@@ -564,7 +605,7 @@ def build_session(
     # ahead at the next one. select_item needs this: it fires on the listing
     # page but names the product that the *following* page will show.
     pages: list[tuple[str, dict[str, Any]]] = []
-    for page_type in walk:
+    for position, page_type in enumerate(walk):
         payload: dict[str, Any] = {}
         if page_type == "plp":
             payload["category"] = rng.choice(sorted({i["category"] for i in catalogue}))
@@ -572,6 +613,13 @@ def build_session(
             payload["item"] = rng.choice(catalogue)
         elif page_type == "search":
             payload["search_term"] = rng.choice(world.section("search_terms"))
+        variants = world.section("pages")[page_type]
+        if isinstance(variants, list) and len(variants) > 1:
+            # Its own stream, so giving a page several URLs moves no other draw.
+            payload["variant"] = derive(
+                world.master_seed, "page-variant", visitor.cohort.isoformat(), visitor.index,
+                day.isoformat(), ordinal, position,
+            ).choices(range(len(variants)), weights=[float(v.get("weight", 1)) for v in variants], k=1)[0]
         pages.append((page_type, payload))
 
     # A campaign clicked part-way through a visit. GA4 does not start a new
@@ -688,6 +736,18 @@ def build_session(
             if world.event_enabled("add_payment_info"):
                 cursor += dt.timedelta(seconds=rng.uniform(*world.dwell("add_payment_info")))
                 emit("add_payment_info", {"cart": cart})
+        elif page_type == "contact":
+            # Sending the form is what takes the visitor to the confirmation
+            # page, so a form that is sent was also started. A visitor who
+            # leaves without sending it may still have started filling it in.
+            submits = next_entry is not None and next_entry[0] == "lead_confirmation"
+            if world.event_enabled("form_start") and (submits or rng.random() < form_start_rate):
+                cursor += dt.timedelta(seconds=rng.uniform(*world.dwell("form_start")))
+                emit("form_start")
+        elif page_type == "lead_confirmation":
+            if world.event_enabled("generate_lead"):
+                cursor += page_load_delay()
+                emit("generate_lead")
         elif page_type == "purchased":
             if world.event_enabled("purchase"):
                 cursor += page_load_delay()
@@ -727,7 +787,12 @@ def build_session(
         for custom in custom_events:
             if page_type not in custom.get("on_page", []):
                 continue
-            if rng.random() >= float(custom.get("rate", 0.0)):
+            rate = float(custom.get("rate", 0.0))
+            by_intent = custom.get("rate_by_intent")
+            if by_intent:
+                # The same draw either way, so other events stay where they were.
+                rate = min(1.0, rate * float(by_intent.get(visitor.intent, 1.0)))
+            if rng.random() >= rate:
                 continue
             cursor += dt.timedelta(seconds=rng.uniform(*world.dwell("custom_event")))
             emit(custom["name"], {"custom_params": custom.get("params") or {}})
@@ -742,6 +807,12 @@ def build_session(
             cart = cart + [line]
             cursor += dt.timedelta(seconds=rng.uniform(*world.dwell("add_to_cart")))
             emit("add_to_cart", {"cart": [line]})
+
+        # form_submit is the last thing on a contact page: it navigates away.
+        if (page_type == "contact" and world.event_enabled("form_submit")
+                and next_entry is not None and next_entry[0] == "lead_confirmation"):
+            cursor += dt.timedelta(seconds=rng.uniform(*world.dwell("form_submit")))
+            emit("form_submit")
 
         previous_url = url
         cursor += dt.timedelta(seconds=rng.uniform(gap_low, gap_high))
@@ -758,7 +829,7 @@ def build_session(
     engaged = (
         page_views >= int(session_cfg["engaged_min_page_views"])
         or duration >= float(session_cfg["engaged_min_seconds"])
-        or any(a.event_name == "purchase" for a in actions)
+        or any(a.event_name in ("purchase", "generate_lead") for a in actions)
     )
 
     # A trailing user_engagement is only sent for engaged sessions.
@@ -815,7 +886,7 @@ def _transaction_id(world: World, visitor: Visitor, day: dt.date, seq: int, ordi
     if ordinal:
         key += ("extra-session", ordinal)
     number = stable_int(world.master_seed, "txn", *key, digits=12)
-    return f"NM-{number}"
+    return f"{world.ecommerce_setting('transaction_id_prefix')}{number}"
 
 
 # ---------------------------------------------------------------------------
@@ -835,10 +906,12 @@ def _places_offline_order(world: World, cohort: dt.date, index: int, day: dt.dat
     none, because the server has no client id to report them under. The cheap
     draw runs first so the identity checks only happen for the rare hit.
     """
-    cfg = world.server_side.get("offline_orders") or {}
-    rate = float(cfg.get("daily_rate", 0.0))
+    if not world.offline_orders_enabled:
+        return False
+    cfg = world.server_side["offline_orders"]
+    rate = float(cfg["daily_rate"])
     delta = (day - cohort).days
-    if rate <= 0.0 or delta < 1:
+    if delta < 1:
         return False
     probability = rate * math.exp(-delta / float(cfg.get("decay_days", 60)))
     if uniform(world.master_seed, "offline", cohort.isoformat(), index, day.isoformat()) >= probability:
@@ -872,7 +945,7 @@ def build_offline_order(
     day: dt.date,
     prior_sessions: PriorSessions = (),
 ) -> Session:
-    """A server-side order with no browser session, placed during business hours."""
+    """A server-side order with no browser session, at an hour drawn from session.hour_weights."""
     rng = derive(world.master_seed, "offline-order", visitor.cohort.isoformat(), visitor.index, day.isoformat())
     weights = world.section("session")["hour_weights"]
     hour = rng.choices(range(24), weights=weights, k=1)[0]
@@ -883,7 +956,8 @@ def build_offline_order(
     when = local.astimezone(dt.timezone.utc)
 
     catalogue = world.section("catalogue")
-    lines = int(rng.choices([1, 2, 3], weights=[70, 22, 8], k=1)[0])
+    counts, weights = world.offline_line_item_weights
+    lines = int(rng.choices(counts, weights=weights, k=1)[0])
     picked = rng.sample(catalogue, k=min(lines, len(catalogue)))
     cart = _build_cart(world, rng, picked)
     order = Action(
@@ -949,7 +1023,7 @@ def build_offline_order(
 
 def offline_orders_on(world: World, day: dt.date) -> Iterator[Session]:
     """Every offline order placed on ``day`` (local time)."""
-    if float((world.server_side.get("offline_orders") or {}).get("daily_rate", 0.0)) <= 0.0:
+    if not world.offline_orders_enabled:
         return
     # An offline order is a purchase event, so a property that does not send
     # purchases (or sells nothing) has none.

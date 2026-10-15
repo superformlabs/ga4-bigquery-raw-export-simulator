@@ -726,6 +726,49 @@ footer.powered a:focus {
   }
 }
 
+/* The four types of dataset: one full-width button per line, the name on the first line and its sentence
+   under it as a second, smaller line (decisions D-96 and D-97). The look of the full-width rows the
+   locations had under decision D-90, because a sentence does not fit in the small buttons of decision D-93.
+
+   A column of buttons, 600 px at most and centred, with the text on the left: a sentence reads better from
+   a straight left edge than from the middle. */
+.types {
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
+  max-width: 600px;
+  margin: 0 auto;
+  text-align: left;
+}
+.types button {
+  display: block;
+  width: 100%;
+  color: var(--ink);
+  background: #fff;
+  border: 1px solid var(--field);
+  border-radius: 10px;
+  padding: 14px 18px;
+  text-align: left;
+  font-size: 17px;
+  line-height: 1.45;
+}
+.types button[aria-pressed="true"] {
+  background: var(--soft);
+  border-color: var(--ink);
+}
+/* The name keeps its weight whether the button is taken or not: a heavier name would move the sentence
+   under it on a click. */
+.types button .pick {
+  display: block;
+  font-weight: 600;
+}
+/* The sentence: smaller and grey, on its own line under the name, in both states. */
+.types button .hint {
+  display: block;
+  color: var(--muted);
+  font-size: 15px;
+}
+
 /* The three experiences: an icon and a name, in a bordered button. */
 .modes {
   display: flex;

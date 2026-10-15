@@ -23,6 +23,7 @@ Check = Callable[[World, dt.date, list[Row]], list[str]]
 # Funnel steps that imply every earlier step must also have occurred in the
 # same session.
 FUNNEL = ["view_item", "add_to_cart", "view_cart", "begin_checkout", "purchase"]
+LEAD_FUNNEL = ["form_start", "form_submit", "generate_lead"]
 
 
 def _param(row: Row, key: str) -> Any:
@@ -286,6 +287,13 @@ def check_first_batch_composition(world: World, day: dt.date, rows: list[Row]) -
             if row["batch_ordering_id"] == 1 and row["event_name"] in _PAGE_LOAD_EVENTS
         ]
         if not opening:
+            # No batch 1 here at all: the session opened in the previous
+            # shard. A batch 1 without a page load breaks the rule outright.
+            stray = next((row for row in events if row["batch_ordering_id"] == 1), None)
+            if stray is not None:
+                failures.append(
+                    f"session {pseudo}/{session_id}: {stray['event_name']} is in the first batch"
+                )
             continue
         started = min(opening)
         for row in events:
@@ -406,14 +414,15 @@ def check_funnel_nesting(world: World, day: dt.date, rows: list[Row]) -> list[st
         if not _opens_in_shard(events):
             continue  # opened in a previous shard, or a lone server-side purchase
         present = {row["event_name"] for row in events}
-        for position, step in enumerate(FUNNEL):
-            if step not in present:
-                continue
-            missing = [earlier for earlier in FUNNEL[:position] if earlier not in present]
-            if missing:
-                failures.append(
-                    f"session {pseudo}/{session_id} has {step} without {', '.join(missing)}"
-                )
+        for funnel in (FUNNEL, LEAD_FUNNEL):
+            for position, step in enumerate(funnel):
+                if step not in present:
+                    continue
+                missing = [earlier for earlier in funnel[:position] if earlier not in present]
+                if missing:
+                    failures.append(
+                        f"session {pseudo}/{session_id} has {step} without {', '.join(missing)}"
+                    )
     return failures[:20]
 
 
@@ -444,19 +453,18 @@ def check_purchased_items_were_viewed(world: World, day: dt.date, rows: list[Row
 
 
 def check_revenue_reconciles(world: World, day: dt.date, rows: list[Row]) -> list[str]:
-    """purchase_revenue must equal item revenue plus tax and shipping."""
+    """purchase_revenue must equal item revenue: GA4 recommends leaving out tax and shipping."""
     failures = []
     for row in rows:
         if row["event_name"] != "purchase":
             continue
         ecommerce = row["ecommerce"]
         items_total = round(sum(item["item_revenue"] for item in row["items"]), 2)
-        expected = round(items_total + (ecommerce["tax_value"] or 0.0) + (ecommerce["shipping_value"] or 0.0), 2)
         actual = round(ecommerce["purchase_revenue"], 2)
-        if abs(expected - actual) > 0.011:
+        if abs(items_total - actual) > 0.011:
             failures.append(
                 f"transaction {ecommerce['transaction_id']}: purchase_revenue {actual} "
-                f"!= items {items_total} + tax {ecommerce['tax_value']} + shipping {ecommerce['shipping_value']}"
+                f"!= item revenue {items_total}"
             )
         quantity = sum(item["quantity"] for item in row["items"])
         if ecommerce["total_item_quantity"] != quantity:

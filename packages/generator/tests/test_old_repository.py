@@ -28,6 +28,14 @@ PREVIOUS_REPOSITORY_NAME = "-".join(["ga4dataform", "demo", "public"])
 # earlier private repository, and names no repository (D-91).
 PROVENANCE_FILE = "ORIGIN.md"
 
+# Every commit the code has been brought up to: the first copy (D-91) and
+# each sync since. The note has to name all of them, so the check above
+# cannot pass by saying nothing at all.
+COMMITS = (
+    "99028e8ffe4a804220bc9832245b6cc1ee87918f",  # the first copy, 2026-10-13 (D-91)
+    "c2e6cf92b1e66b7e2e364836946c555d63c84638",  # the sync of 2026-10-14 (D-95)
+)
+
 # Folders that are not part of the repository: git ignores all of them.
 NOT_OURS = {".venv", "__pycache__", ".pytest_cache", "out", "build", "dist"}
 
@@ -72,4 +80,5 @@ def test_the_repository_before_d91_appears_nowhere() -> None:
 def test_the_provenance_note_says_where_the_code_came_from() -> None:
     """Otherwise the test above would pass by saying nothing at all."""
     note = (PACKAGE_DIR / PROVENANCE_FILE).read_text(encoding="utf-8")
-    assert "99028e8ffe4a804220bc9832245b6cc1ee87918f" in note
+    missing = [commit for commit in COMMITS if commit not in note]
+    assert not missing, f"{PROVENANCE_FILE} does not name {missing}"

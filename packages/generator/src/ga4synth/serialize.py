@@ -38,21 +38,9 @@ from zoneinfo import ZoneInfo
 
 from .params import build_params, pack, pack_session_engaged
 from .rng import derive, stable_int
-from .simulate import Action, Session, Visitor, _offline_order_dates, build_offline_order, build_session
-from .values import resolve_mapping
+from .simulate import Action, Session, Visitor, _offline_order_dates, _page, build_offline_order, build_session
+from .values import resolve, resolve_mapping
 from .world import World
-
-# Maps a configured channel onto the value GA4 reports as
-# session_traffic_source_last_click.cross_channel_campaign.default_channel_group.
-DEFAULT_CHANNEL_GROUP = {
-    "organic_search": "Organic Search",
-    "direct": "Direct",
-    "paid_search": "Paid Search",
-    "paid_social": "Paid Social",
-    "organic_social": "Organic Social",
-    "email": "Email",
-    "referral": "Referral",
-}
 
 _NULL_APP_INFO = {
     "id": None, "version": None, "install_store": None,
@@ -135,7 +123,6 @@ def _cart_totals(world: World, cart: list[Any]) -> dict[str, float]:
         "subtotal": subtotal,
         "shipping": shipping,
         "tax": tax,
-        "total": _money(subtotal + shipping + tax),
     }
 
 
@@ -153,10 +140,10 @@ def _items_array(world: World, cart: list[Any], list_name: str | None = None) ->
                     "item_brand": brand,
                     "item_variant": line.variant,
                     "item_category": line.category,
-                    "price_in_usd": line.price,
+                    "price_in_usd": world.to_usd(line.price),
                     "price": line.price,
                     "quantity": line.quantity,
-                    "item_revenue_in_usd": revenue,
+                    "item_revenue_in_usd": world.to_usd(revenue),
                     "item_revenue": revenue,
                     "item_list_name": list_name,
                     "item_list_id": list_name.lower().replace(" ", "_") if list_name else None,
@@ -168,11 +155,12 @@ def _items_array(world: World, cart: list[Any], list_name: str | None = None) ->
     return out
 
 
-def _catalogue_items(world: World, entries: list[dict[str, Any]], list_name: str) -> list[dict[str, Any]]:
+def _catalogue_items(world: World, entries: list[dict[str, Any]], list_name: str | None) -> list[dict[str, Any]]:
     """Items array for a listing event, where there is no cart yet."""
     brand = world.section("property")["brand"]
     out = []
     for index, entry in enumerate(entries, start=1):
+        listed = list_name is not None
         out.append(
             _struct(
                 _ITEM_KEYS,
@@ -181,11 +169,11 @@ def _catalogue_items(world: World, entries: list[dict[str, Any]], list_name: str
                     "item_name": entry["item_name"],
                     "item_brand": brand,
                     "item_category": entry["category"],
-                    "price_in_usd": float(entry["price"]),
+                    "price_in_usd": world.to_usd(float(entry["price"])),
                     "price": float(entry["price"]),
                     "item_list_name": list_name,
-                    "item_list_id": list_name.lower().replace(" ", "_"),
-                    "item_list_index": str(index),
+                    "item_list_id": list_name.lower().replace(" ", "_") if listed else None,
+                    "item_list_index": str(index) if listed else None,
                     "item_params": [],
                 },
             )
@@ -219,11 +207,12 @@ def _last_click(world: World, channel: str, acquired: dict[str, Any]) -> dict[st
 
     google_ads = None
     if is_google_ads:
+        customer_id, account_name = world.google_ads_account(channel)
         google_ads = _struct(
             _GOOGLE_ADS_KEYS,
             {
-                "customer_id": "4477112200",
-                "account_name": f"{world.section('property')['brand']} | Search",
+                "customer_id": customer_id,
+                "account_name": account_name,
                 "campaign_id": acquired.get("campaign_id"),
                 "campaign_name": campaign,
                 "ad_group_id": acquired.get("ad_group_id"),
@@ -231,7 +220,7 @@ def _last_click(world: World, channel: str, acquired: dict[str, Any]) -> dict[st
             },
         )
 
-    group = DEFAULT_CHANNEL_GROUP.get(channel, "Unassigned")
+    group = world.channel_group(channel)
     cross_channel = _struct(
         _CROSS_CHANNEL_KEYS,
         {
@@ -331,6 +320,20 @@ def _event_params(
     elif name == "view_search_results":
         common["search_term"] = payload["search_term"]
         common["unique_search_term"] = 1
+    elif name in ("form_start", "form_submit"):
+        common.update({
+            "form_id": world.lead_setting("form_id"),
+            "form_name": world.lead_setting("form_name"),
+            "form_destination": _form_destination(world),
+        })
+        if name == "form_submit":
+            common["form_submit_text"] = world.lead_setting("form_submit_text")
+    elif name == "generate_lead":
+        value = _lead_choice(world, session, "value")
+        if value is not None:
+            common["value"] = value
+            common["currency"] = currency
+        common["lead_source"] = _lead_choice(world, session, "lead_source")
     elif name == "click":
         url = payload["link_url"]
         domain = url.split("//", 1)[-1].split("/", 1)[0]
@@ -348,15 +351,14 @@ def _event_params(
             totals = _cart_totals(world, payload["cart"])
             common["value"] = totals["subtotal"]
             if name == "add_shipping_info":
-                common["shipping_tier"] = "Standard"
+                common["shipping_tier"] = _checkout_choice(world, session, "shipping_tier")
             elif name == "add_payment_info":
-                common["payment_type"] = "Credit Card"
+                common["payment_type"] = _checkout_choice(world, session, "payment_type")
             elif name == "purchase":
                 common.update({
                     "transaction_id": payload["transaction_id"],
                     "tax": totals["tax"],
                     "shipping": totals["shipping"],
-                    "value": totals["total"],
                 })
     elif name in ("view_item_list", "select_item"):
         common["item_list_name"] = payload["list_name"]
@@ -428,6 +430,48 @@ def _template_context(world: World, session: Session, action: Action) -> dict[st
     }
 
 
+def _checkout_choice(world: World, session: Session, key: str) -> Any:
+    """``ecommerce.shipping_tier`` or ``ecommerce.payment_type`` for one session.
+
+    Drawn from a stream of its own keyed on the session, so a session repeats
+    its choice on every checkout and the draw moves nothing else.
+    """
+    spec = world.ecommerce_setting(key)
+    if not isinstance(spec, dict):
+        return spec
+    rng = derive(
+        world.master_seed, key, session.visitor.user_pseudo_id, int(session.started.timestamp()),
+    )
+    return resolve(spec, rng, {})
+
+
+def _form_destination(world: World) -> str | None:
+    """The URL a contact form posts to: the lead_confirmation page, if there is one."""
+    if "lead_confirmation" not in world.section("pages"):
+        return None
+    path, _ = _page(world, None, "lead_confirmation", {})
+    return f"https://{world.hostname}{path}"
+
+
+def _lead_choice(world: World, session: Session, key: str) -> Any:
+    """``leads.value`` or ``leads.lead_source`` for one session, from its own stream."""
+    spec = world.lead_setting(key)
+    if not isinstance(spec, dict):
+        return spec
+    rng = derive(
+        world.master_seed, "lead", key, session.visitor.user_pseudo_id, int(session.started.timestamp()),
+    )
+    return resolve(spec, rng, {})
+
+
+def _event_value_in_usd(world: World, value: dict[str, Any] | None) -> float | None:
+    """event_value_in_usd: the event's `value` parameter, converted to US dollars."""
+    if value is None:
+        return None
+    amount = float(value["int_value"]) if value["int_value"] is not None else value["double_value"]
+    return world.to_usd(amount)
+
+
 def _configured_params(
     world: World, session: Session, action: Action
 ) -> dict[str, Any]:
@@ -495,7 +539,9 @@ def _ecommerce_and_items(world: World, action: Action) -> tuple[dict[str, Any], 
 
     if name == "view_item":
         item = payload["item"]
-        return _struct(_ECOMMERCE_KEYS), _catalogue_items(world, [item], "Product detail")
+        return _struct(_ECOMMERCE_KEYS), _catalogue_items(
+            world, [item], world.ecommerce_setting("view_item_list_name")
+        )
 
     if name in ("add_to_cart", "view_cart", "begin_checkout", "add_shipping_info", "add_payment_info"):
         cart = payload["cart"]
@@ -504,7 +550,7 @@ def _ecommerce_and_items(world: World, action: Action) -> tuple[dict[str, Any], 
             "total_item_quantity": sum(line.quantity for line in cart),
             "unique_items": len(cart),
             "shipping_value": totals["shipping"] if name in ("add_shipping_info", "add_payment_info") else None,
-            "shipping_value_in_usd": totals["shipping"] if name in ("add_shipping_info", "add_payment_info") else None,
+            "shipping_value_in_usd": world.to_usd(totals["shipping"]) if name in ("add_shipping_info", "add_payment_info") else None,
         })
         return ecommerce, _items_array(world, cart)
 
@@ -514,12 +560,14 @@ def _ecommerce_and_items(world: World, action: Action) -> tuple[dict[str, Any], 
         ecommerce = _struct(_ECOMMERCE_KEYS, {
             "total_item_quantity": sum(line.quantity for line in cart),
             "unique_items": len(cart),
-            "purchase_revenue": totals["total"],
-            "purchase_revenue_in_usd": totals["total"],
+            # GA4 recommends a value without shipping or tax, which have
+            # fields of their own.
+            "purchase_revenue": totals["subtotal"],
+            "purchase_revenue_in_usd": world.to_usd(totals["subtotal"]),
             "shipping_value": totals["shipping"],
-            "shipping_value_in_usd": totals["shipping"],
+            "shipping_value_in_usd": world.to_usd(totals["shipping"]),
             "tax_value": totals["tax"],
-            "tax_value_in_usd": totals["tax"],
+            "tax_value_in_usd": world.to_usd(totals["tax"]),
             "transaction_id": payload["transaction_id"],
         })
         return ecommerce, _items_array(world, cart)
@@ -551,7 +599,7 @@ def _replay(
     prior = build_session(world, visitor, session_number, day, ordinal=ordinal)
     revenue = _money(
         sum(
-            _cart_totals(world, action.payload["cart"])["total"]
+            _cart_totals(world, action.payload["cart"])["subtotal"]
             for action in prior.actions
             if action.event_name == "purchase"
         )
@@ -584,11 +632,16 @@ def _attributed_click(world: World, session: Session) -> tuple[str, int]:
     if session.last_click_channel != "direct" or lookback <= 0 or session.server_side_only:
         return own
     session_day = session.started.astimezone(ZoneInfo(world.timezone)).date()
+    oldest = own[1] - lookback * 86_400
     history = list(enumerate(session.prior_sessions, start=1))
     for number, (day, ordinal) in reversed(history):
+        # The calendar day rules most sessions out without replaying them. The
+        # window itself is exact: lookback days of 24 hours before this start.
         if (session_day - day).days > lookback:
             break
         _, channel, started = _replay(world, session.visitor, number, day, ordinal)
+        if started < oldest:
+            break
         if channel != "direct":
             return channel, started
     return own
@@ -622,7 +675,7 @@ def _offline_order_revenue(world: World, visitor: Visitor, day: dt.date) -> floa
     if cached is not None:
         return cached
     order = build_offline_order(world, visitor, day)
-    revenue = _money(_cart_totals(world, order.actions[0].payload["cart"])["total"])
+    revenue = _money(_cart_totals(world, order.actions[0].payload["cart"])["subtotal"])
     if len(_LTV_CACHE) < _LTV_CACHE_LIMIT:
         _LTV_CACHE[key] = revenue
     return revenue
@@ -672,10 +725,7 @@ def _serialize_server_side(
         "event_name": action.event_name,
         "event_params": params,
         "event_previous_timestamp": None,
-        "event_value_in_usd": (
-            (float(value["int_value"]) if value["int_value"] is not None else value["double_value"])
-            if value is not None and world.currency == "USD" else None
-        ),
+        "event_value_in_usd": _event_value_in_usd(world, value),
         "event_bundle_sequence_id": stable_int(
             world.master_seed, "bundle", action.payload["transaction_id"], digits=9,
         ),
@@ -788,9 +838,12 @@ def serialize_session(world: World, session: Session) -> Iterator[dict[str, Any]
     first_acquired = world.acquisition(
         visitor.first_channel, visitor.user_pseudo_id, visitor.first_touch_us // 1_000_000
     )
+    # Without a campaign, GA4 names the medium in parentheses: (organic),
+    # (referral). Direct, whose medium is (none), becomes (direct).
+    medium = first_acquired["medium"]
     traffic_source = {
-        "name": first_acquired["campaign"] or "(direct)",
-        "medium": first_acquired["medium"],
+        "name": first_acquired["campaign"] or ("(direct)" if medium == "(none)" else f"({medium})"),
+        "medium": medium,
         "source": first_acquired["source"],
     }
 
@@ -838,7 +891,7 @@ def serialize_session(world: World, session: Session) -> Iterator[dict[str, Any]
         server_side = bool(action.payload.get("server_side"))
         if server_side:
             yield from _serialize_server_side(world, session, action, ltv, traffic_source, user_properties, rng)
-            ltv = _money(ltv + _cart_totals(world, action.payload["cart"])["total"])
+            ltv = _money(ltv + _cart_totals(world, action.payload["cart"])["subtotal"])
             continue
         page_load = action.event_name in _PAGE_LOAD_EVENTS
         same_batch = (
@@ -877,13 +930,7 @@ def serialize_session(world: World, session: Session) -> Iterator[dict[str, Any]
         value_param = next(
             (p["value"] for p in params if p["key"] == "value"), None
         )
-        event_value_in_usd = None
-        if value_param is not None and world.currency == "USD":
-            event_value_in_usd = (
-                float(value_param["int_value"])
-                if value_param["int_value"] is not None
-                else value_param["double_value"]
-            )
+        event_value_in_usd = _event_value_in_usd(world, value_param)
 
         local = action.when.astimezone(tz)
 

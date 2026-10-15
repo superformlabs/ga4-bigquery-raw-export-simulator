@@ -225,11 +225,13 @@ function ProjectScreen({ draft, go, install, signedOut }: ScreenProps) {
   );
 }
 
-// Guided, after the project: which type of dataset?
+// Guided, after the project: which type of dataset? Four choices since decisions D-96 and D-97, in place
+// of two. Each is a full-width button with its name and, under it, the line of decision D-97.
 function TypeScreen({ draft, go }: ScreenProps) {
   return (
     <Screen title="Choose your type of dataset" subtitle={SUBTITLES.type} signOut onBack={() => go("project")}>
       <Choices
+        look="types"
         label="Choose your type of dataset"
         items={TYPE_CHOICES}
         current={draft.datasetType}

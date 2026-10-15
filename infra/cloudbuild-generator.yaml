@@ -2,8 +2,9 @@
 #
 # Submitted from the temp folder that build.sh prepares: a copy of the files
 # packages/generator/Dockerfile needs, which is the generator's source in
-# src/ga4synth/, pyproject.toml, README.md, LICENSE, and the app's two
-# configurations in config/default/ and config/ecommerce/ (decision D-91).
+# src/ga4synth/, pyproject.toml, README.md, LICENSE, and the app's four
+# configurations in config/default/, config/ecommerce/, config/eu-consent/
+# and config/lead-generation/ (decisions D-91, D-96 and D-97).
 #
 #   gcloud builds submit <folder> --config=infra/cloudbuild-generator.yaml \
 #     --substitutions=_IMAGE=<image:tag>,_CHECK_DATE=<YYYY-MM-DD>
@@ -20,9 +21,10 @@ steps:
       - --tag=${_IMAGE}
       - .
 
-  # The four files are where the contract says, nothing is left at the old
-  # place, and the two environment variables name the ecommerce pair. The
-  # Dockerfile sets both; this reads them back off the built image.
+  # The eight files are where the contract says, one pair per type, nothing is
+  # left at the old place, and the two environment variables name the
+  # ecommerce pair. The Dockerfile sets both; this reads them back off the
+  # built image.
   # "$$" is how this file writes a "$" that Cloud Build must leave alone.
   - id: check-files
     name: gcr.io/cloud-builders/docker
@@ -33,10 +35,10 @@ steps:
         set -euo pipefail
         docker run --rm --entrypoint sh "${_IMAGE}" -c '
           set -eu
-          for file in \
-            /app/config/default/property.yaml /app/config/default/mixer.yaml \
-            /app/config/ecommerce/property.yaml /app/config/ecommerce/mixer.yaml; do
-            if [ ! -s "$$file" ]; then echo "missing in the image: $$file" >&2; exit 1; fi
+          for type in default ecommerce eu-consent lead-generation; do
+            for file in /app/config/$$type/property.yaml /app/config/$$type/mixer.yaml; do
+              if [ ! -s "$$file" ]; then echo "missing in the image: $$file" >&2; exit 1; fi
+            done
           done
           for file in /app/config/property.yaml /app/config/mixer.yaml; do
             if [ -e "$$file" ]; then echo "must not be in the image: $$file" >&2; exit 1; fi
@@ -47,39 +49,28 @@ steps:
           if [ "$$GA4SYNTH_MIXER" != /app/config/ecommerce/mixer.yaml ]; then
             echo "GA4SYNTH_MIXER is $$GA4SYNTH_MIXER" >&2; exit 1
           fi
-          echo "ok: four files, two variables"
+          echo "ok: eight files, two variables"
         '
 
-  # Each configuration generates one day that passes the generator's own
-  # schema check and invariants. Written as the job writes it: the two global
-  # options first, then the command.
-  - id: check-default
+  # Each of the four configurations generates one day that passes the
+  # generator's own schema check and its invariants. Written as the job writes
+  # it: the two global options first, then the command. One step for the four,
+  # so a new type needs no new step; the name of the type that fails is on the
+  # line before its output.
+  - id: check-each-type
     name: gcr.io/cloud-builders/docker
+    entrypoint: bash
     args:
-      - run
-      - --rm
-      - ${_IMAGE}
-      - --property
-      - /app/config/default/property.yaml
-      - --mixer
-      - /app/config/default/mixer.yaml
-      - verify
-      - --date
-      - ${_CHECK_DATE}
-
-  - id: check-ecommerce
-    name: gcr.io/cloud-builders/docker
-    args:
-      - run
-      - --rm
-      - ${_IMAGE}
-      - --property
-      - /app/config/ecommerce/property.yaml
-      - --mixer
-      - /app/config/ecommerce/mixer.yaml
-      - verify
-      - --date
-      - ${_CHECK_DATE}
+      - -c
+      - |
+        set -euo pipefail
+        for type in default ecommerce eu-consent lead-generation; do
+          echo "--- verifying the $$type day"
+          docker run --rm "${_IMAGE}" \
+            --property /app/config/$$type/property.yaml \
+            --mixer /app/config/$$type/mixer.yaml \
+            verify --date "${_CHECK_DATE}"
+        done
 
   # An install made before api.md v1.8 names no configuration. Its job must
   # produce the Ecommerce type with this image, as it did with the image it

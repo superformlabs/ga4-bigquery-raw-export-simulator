@@ -1,0 +1,215 @@
+# Scenario: Lead Generation. What the property IS.
+#
+# GA4Dataform, the same business software website as config/ecommerce/, with
+# a form to book a demo (decision D-97). Nothing is bought online here: the
+# conversion is a lead, sent as generate_lead with a value, after the demo
+# form is started and submitted.
+#
+#   contact            the demo request form: form_start, then form_submit
+#   lead_confirmation  where a submitted form lands: generate_lead
+#
+# The generator keeps the three nested, as it does the ecommerce funnel:
+# check_funnel_nesting rejects a generate_lead without form_submit and
+# form_start before it in the same session.
+#
+# Comments here cover what is distinctive about this scenario. Every setting is
+# documented in full in config/ecommerce/property.yaml.
+
+property:
+  stream_id: "7700000201"
+  hostname: "ga4dataform.com"
+  brand: "GA4Dataform"
+  currency: "USD"
+  usd_exchange_rate: 1.0
+  timezone: "America/Chicago"
+  default_language: "en-us"
+
+seed:
+  master: "scenario-lead-generation-v1"
+
+ecommerce:
+  enabled: false
+
+channels:
+  organic_search:
+    channel_group: "Organic Search"
+    source: google
+    medium: organic
+    campaign: null
+    term: null
+    content: null
+    referrer: "https://www.google.com/"
+    source_weight: 90
+    other_sources:
+      bing:       {weight: 8, medium: organic, referrer: "https://www.bing.com/"}
+      duckduckgo: {weight: 2, medium: organic, referrer: "https://duckduckgo.com/"}
+  direct:
+    channel_group: "Direct"
+    source: "(direct)"
+    medium: "(none)"
+    campaign: null
+    term: null
+    content: null
+    referrer: null
+  paid_search:
+    channel_group: "Paid Search"
+    source: google
+    medium: cpc
+    term: null
+    content: null
+    campaigns:
+      brand-core:       {weight: 40, term: "ga4dataform", ad_group: "brand-exact"}
+      nonbrand-export:  {weight: 35, term: "ga4 bigquery export", ad_group: "bigquery-export-phrase"}
+      sessions-model:   {weight: 15, term: "ga4 sessions model sql", ad_group: "sessions-model-broad"}
+      competitor-terms: {weight: 10, term: "ga4 reporting tools alternatives", ad_group: "competitors-broad"}
+    gclid: true
+    google_ads:
+      customer_id: "5520184463"
+      account_name: "{brand} | Search"
+    referrer: "https://www.google.com/"
+  paid_social:
+    channel_group: "Paid Social"
+    source: linkedin
+    medium: paid_social
+    term: null
+    content: null
+    campaigns:
+      data-leaders-awareness: {weight: 55, content: "video-30s"}
+      demo-retargeting:       {weight: 45, content: "single-image"}
+    referrer: "https://www.linkedin.com/"
+  organic_social:
+    channel_group: "Organic Social"
+    source: linkedin
+    medium: social
+    campaign: null
+    term: null
+    content: null
+    referrer: "https://www.linkedin.com/"
+    source_weight: 80
+    other_sources:
+      youtube: {weight: 12, medium: social, referrer: "https://www.youtube.com/"}
+      reddit:  {weight: 8,  medium: social, referrer: "https://www.reddit.com/"}
+  email:
+    channel_group: "Email"
+    source: newsletter
+    medium: email
+    term: null
+    content: null
+    campaigns:
+      product-update:   50
+      nurture-sequence: 35
+      webinar-invite:   15
+    referrer: null
+  referral:
+    channel_group: "Referral"
+    source: "analyticsreview.example"
+    medium: referral
+    campaign: null
+    term: null
+    content: null
+    referrer: "https://analyticsreview.example/reviews/"
+    source_weight: 55
+    other_sources:
+      "datastackweekly.example":  {weight: 25, medium: referral, referrer: "https://datastackweekly.example/ga4-models/"}
+      "partnerdirectory.example": {weight: 20, medium: referral, referrer: "https://partnerdirectory.example/apps/"}
+
+devices:
+  desktop:
+    os: ["Windows", "Macintosh"]
+    browser: ["Chrome", "Edge", "Safari", "Firefox"]
+    brand: []
+  mobile:
+    os: ["iOS", "Android"]
+    browser: ["Chrome", "Safari"]
+    brand: ["Apple", "Samsung", "Google"]
+  tablet:
+    os: ["iOS", "Android"]
+    browser: ["Chrome", "Safari"]
+    brand: ["Apple", "Samsung"]
+
+# The same strings as config/ecommerce/property.yaml, which took them from a
+# real export.
+geos:
+  us_new_york: {country: "United States", region: "New York", city: "New York", metro: "New York, NY", continent: "Americas", sub_continent: "Northern America", language: "en-us"}
+  us_chicago: {country: "United States", region: "Illinois", city: "Chicago", metro: "Chicago IL", continent: "Americas", sub_continent: "Northern America", language: "en-us"}
+  us_los_angeles: {country: "United States", region: "California", city: "Los Angeles", metro: "Los Angeles-Long Beach-Santa Ana, CA", continent: "Americas", sub_continent: "Northern America", language: "en-us"}
+  ca_toronto: {country: "Canada", region: "Ontario", city: "Toronto", metro: "(not set)", continent: "Americas", sub_continent: "Northern America", language: "en-us"}
+  uk_london: {country: "United Kingdom", region: "England", city: "London", metro: "London", continent: "Europe", sub_continent: "Northern Europe", language: "en-gb"}
+  au_sydney: {country: "Australia", region: "New South Wales", city: "Sydney", metro: "(not set)", continent: "Oceania", sub_continent: "Australasia", language: "en-au"}
+  in_bengaluru: {country: "India", region: "Karnataka", city: "Bengaluru", metro: "Karnataka Urban", continent: "Asia", sub_continent: "Southern Asia", language: "en-in"}
+
+catalogue: []
+
+search_terms: ["pricing", "bigquery export", "attribution", "sessions model", "consent mode", "api", "dataform"]
+
+outbound_links:
+  - "https://www.linkedin.com/company/ga4dataform"
+  - "https://status.ga4dataform.com/"
+
+# The same addresses as config/ecommerce/, minus the shop: it is the same
+# website. It adds the two pages its own funnel needs, the demo form and the
+# page a submitted form lands on. It has no sign-in, so it has no login page.
+pages:
+  home:
+    path: "/"
+    title: "{brand} | GA4 reporting models for BigQuery"
+  features:
+    - {path: "/features/data-models", title: "Data models | {brand}", weight: 45}
+    - {path: "/features/attribution", title: "Attribution | {brand}", weight: 30}
+    - {path: "/features/dashboards", title: "Dashboards | {brand}", weight: 25}
+  pricing:
+    path: "/pricing"
+    title: "Pricing | {brand}"
+  docs:
+    - {path: "/docs/quickstart", title: "Quickstart | {brand}", weight: 40}
+    - {path: "/docs/bigquery-export", title: "The BigQuery export | {brand}", weight: 25}
+    - {path: "/docs/sql-models", title: "SQL models | {brand}", weight: 20}
+    - {path: "/docs/api", title: "API reference | {brand}", weight: 15}
+  blog:
+    - {path: "/blog/sessions-in-bigquery", title: "Sessions in BigQuery | {brand}", weight: 30}
+    - {path: "/blog/consent-mode-and-modelling", title: "Consent mode and modelling | {brand}", weight: 25}
+    - {path: "/blog/attribution-without-guesswork", title: "Attribution without guesswork | {brand}", weight: 30}
+    - {path: "/blog/what-a-query-costs", title: "What a query costs | {brand}", weight: 15}
+  search:
+    path: "/search?q={search_query}"
+    title: "Search results | {brand}"
+  contact:
+    path: "/demo"
+    title: "Book a demo | {brand}"
+  lead_confirmation:
+    path: "/demo/thank-you"
+    title: "Your demo is booked | {brand}"
+
+# One demo request is worth this much to the sales team, in property.currency.
+# It becomes the value parameter of generate_lead and event_value_in_usd.
+leads:
+  form_id: "demo-request"
+  form_name: "demo"
+  form_submit_text: "Book my demo"
+  value: 150.0
+  lead_source: {choice: {website: 85, webinar: 15}}
+
+tracking:
+  events:
+    scroll: true
+    click: true
+    view_search_results: true
+    form_start: true
+    form_submit: true
+    generate_lead: true
+  global_params: {}
+  params_by_event: {}
+  # Softer signals of interest than a demo request.
+  custom_events:
+    - name: newsletter_signup
+      on_page: [blog]
+      rate: 0.03
+      rate_by_intent: {browsing: 0.4, evaluating: 2.0, ready: 1.2}
+      params: {}
+    - name: pricing_calculator_use
+      on_page: [pricing]
+      rate: 0.12
+      rate_by_intent: {browsing: 0.5, evaluating: 1.8, ready: 2.2}
+      params:
+        team_size: {choice: {"1-10": 50, "11-50": 35, "51-200": 15}}
+  user_properties: {}

@@ -234,6 +234,29 @@ def test_first_batch_rule_reaches_denied_rows(world, rows):
     assert run_all(world, DAY, broken)["check_first_batch_composition"]
 
 
+def test_first_batch_rule_fails_a_batch_without_a_page_load(world, rows):
+    """A batch 1 holding only forbidden events must not pass for lack of a page load."""
+    target = next(
+        row for row in rows
+        if row["user_pseudo_id"] and row["event_name"] == "scroll" and row["batch_ordering_id"] > 1
+    )
+    key = (target["user_pseudo_id"], _param(target, "ga_session_id"))
+    broken = [
+        copy.deepcopy(row) for row in rows
+        if not (
+            (row["user_pseudo_id"], _param(row, "ga_session_id")) == key
+            and row["batch_ordering_id"] == 1
+        )
+    ]
+    moved = next(
+        row for row in broken
+        if (row["user_pseudo_id"], _param(row, "ga_session_id")) == key and row["event_name"] == "scroll"
+    )
+    moved["batch_ordering_id"] = 1
+    assert run_all(world, DAY, broken)["check_first_batch_composition"]
+
+
+
 def test_timestamp_monotonicity_check_can_fail(world, rows):
     """Regression test: this check was once written so that it could never fail."""
     broken = copy.deepcopy(rows)
@@ -765,8 +788,14 @@ def test_non_ecommerce_property_emits_no_ecommerce_data():
     """ecommerce.enabled false makes this a content site, columns included."""
     prop, mixer = _base_config()
     prop["ecommerce"]["enabled"] = False
-    for page in ("pdp", "cart", "checkout", "purchased"):
+    removed = {"pdp", "cart", "checkout", "purchased"}
+    for page in removed:
         prop["pages"].pop(page)
+    # A custom event on a page a content site does not have goes with it.
+    prop["tracking"]["custom_events"] = [
+        event for event in prop["tracking"].get("custom_events") or []
+        if not set(event["on_page"]) & removed
+    ]
     mixer["journey"]["entry_weights"] = {"home": 40, "plp": 25, "search": 10, "blog": 25}
     mixer["journey"]["transitions"] = {
         "home": {"plp": 40, "blog": 25, "search": 10, "end": 25},
@@ -1011,7 +1040,7 @@ def test_some_paid_search_acquisitions_are_gclid_only(rows):
     gclid_only = [c for c in clicks if c["manual_source"] is None]
     assert gclid_only, "no gclid-only acquisition"
     assert len(gclid_only) < len(clicks), "no paid-search acquisition kept its UTM parameters"
-    assert 0.55 < len(gclid_only) / len(clicks) < 0.85
+    assert 0.15 < len(gclid_only) / len(clicks) < 0.45
 
 
 def test_a_gclid_only_row_collects_the_gclid_and_nothing_else(rows):
@@ -1074,9 +1103,23 @@ def test_traffic_source_name_is_the_first_sessions_campaign(utm_rows):
         if row["event_name"] != "first_visit":
             continue
         collected = row["collected_traffic_source"]["manual_campaign_name"]
-        assert row["traffic_source"]["name"] == (collected or "(direct)")
+        if collected:
+            assert row["traffic_source"]["name"] == collected
         names.add(collected)
     assert len(names) > 5, names
+
+
+def test_traffic_source_name_without_a_campaign_names_the_medium(rows):
+    """GA4 writes (organic), (referral) and so on; only direct traffic is (direct)."""
+    by_medium = collections.defaultdict(set)
+    for row in rows:
+        name = row["traffic_source"]["name"]
+        if row["user_pseudo_id"] is not None and name.startswith("("):
+            by_medium[row["traffic_source"]["medium"]].add(name)
+    assert by_medium["(none)"] == {"(direct)"}
+    assert by_medium["organic"] == {"(organic)"}
+    assert by_medium["referral"] == {"(referral)"}
+    assert by_medium["social"] == {"(social)"}
 
 
 def test_first_touch_campaign_is_stable_on_a_later_day(world, rows):
@@ -1185,6 +1228,156 @@ def test_returning_visits_convert_better_than_first_visits(world):
     assert returning > 1.3 * first, (first, returning)
 
 
+def _without_showcase_settings():
+    """The shipped config with every setting PR #15 added taken out again."""
+    prop, mixer = _base_config()
+    mixer["intent"].pop("channel_segment_weights", None)
+    mixer["intent"].pop("device_conversion_factor", None)
+    mixer["identity"].pop("cross_device_device_mix", None)
+    mixer["acquisition"].pop("device_channel_skew", None)
+    return prop, mixer
+
+
+def _channel_intent_world(by_channel):
+    prop, mixer = _without_showcase_settings()
+    mixer["intent"]["channel_segment_weights"] = by_channel
+    return load_world(*_write_config(prop, mixer))
+
+
+def test_intent_follows_the_first_channel_when_configured():
+    """A listed channel draws from its own weights; every other visitor keeps its segment."""
+    world = load_world(*_write_config(*_without_showcase_settings()))
+    skewed = _channel_intent_world({"paid_social": {"browsing": 1}, "email": {"ready": 1}})
+    seen = collections.Counter()
+    for index in range(world.new_visitors_on(DAY)):
+        before = _materialise(world, DAY, index)
+        after = _materialise(skewed, DAY, index)
+        assert after.first_channel == before.first_channel
+        if after.first_channel == "paid_social":
+            assert after.intent == "browsing"
+        elif after.first_channel == "email":
+            assert after.intent == "ready"
+        else:
+            assert after.intent == before.intent
+        seen[after.first_channel] += 1
+    assert seen["paid_social"] > 10 and seen["email"] > 10, seen
+
+
+def test_empty_showcase_settings_change_nothing():
+    """Every showcase setting left empty gives the same shard as leaving it out, row for row."""
+    absent = sorted_rows_for_shard(load_world(*_write_config(*_without_showcase_settings())), DAY)
+    prop, mixer = _without_showcase_settings()
+    mixer["intent"].update({"channel_segment_weights": {}, "device_conversion_factor": {}})
+    mixer["identity"]["cross_device_device_mix"] = {}
+    mixer["acquisition"]["device_channel_skew"] = {}
+    empty = sorted_rows_for_shard(load_world(*_write_config(prop, mixer)), DAY)
+    assert [_frozen(row) for row in empty] == [_frozen(row) for row in absent]
+
+
+def _materialised(world, days: int = 3):
+    return [
+        _materialise(world, DAY + dt.timedelta(days=offset), index)
+        for offset in range(days)
+        for index in range(world.new_visitors_on(DAY + dt.timedelta(days=offset)))
+    ]
+
+
+def test_second_devices_can_have_their_own_device_mix(world):
+    prop, mixer = _base_config()
+    mixer["identity"]["cross_device_device_mix"] = {"desktop": 1}
+    skewed = load_world(*_write_config(prop, mixer))
+    seconds = 0
+    for before, after in zip(_materialised(world), _materialised(skewed)):
+        if after.primary_device:
+            assert after.device == before.device
+        else:
+            assert after.device["category"] == "desktop"
+            seconds += 1
+    assert seconds > 50, seconds
+
+
+def test_device_channel_skew_moves_only_that_devices_first_channel(world):
+    prop, mixer = _base_config()
+    mixer["acquisition"]["device_channel_skew"] = {"mobile": {"paid_social": 0}}
+    skewed = load_world(*_write_config(prop, mixer))
+    mobile = 0
+    for before, after in zip(_materialised(world), _materialised(skewed)):
+        assert after.device == before.device
+        if after.device["category"] == "mobile":
+            assert after.first_channel != "paid_social"
+            mobile += 1
+        else:
+            assert after.first_channel == before.first_channel
+    assert mobile > 100, mobile
+
+
+def test_device_conversion_factor_shifts_purchases_between_devices():
+    prop, mixer = _base_config()
+    mixer["intent"]["device_conversion_factor"] = {"desktop": 2.5, "mobile": 0.4}
+    world = load_world(*_write_config(prop, mixer))
+    visits = collections.Counter()
+    bought = collections.Counter()
+    for offset in range(3):
+        for session in sessions_for_visit_date(world, DAY + dt.timedelta(days=offset)):
+            category = session.visitor.device["category"]
+            visits[category] += 1
+            bought[category] += any(a.event_name == "purchase" for a in session.actions)
+    desktop = bought["desktop"] / visits["desktop"]
+    mobile = bought["mobile"] / visits["mobile"]
+    # Conversion factors reach the funnel through a cube root, so a factor
+    # ratio of 6.25 gives about 2.4 times the purchase rate.
+    assert desktop > 1.8 * mobile, (desktop, mobile)
+
+
+def test_custom_event_rate_can_depend_on_intent():
+    prop, mixer = _base_config()
+    prop["tracking"]["custom_events"] = [{
+        "name": "newsletter_signup", "on_page": ["home", "plp", "pdp", "blog"], "rate": 0.2,
+        "rate_by_intent": {"browsing": 0, "ready": 4},
+    }]
+    world = load_world(*_write_config(prop, mixer))
+    fired = collections.Counter()
+    visits = collections.Counter()
+    for session in sessions_for_visit_date(world, DAY):
+        visits[session.visitor.intent] += 1
+        fired[session.visitor.intent] += any(a.event_name == "newsletter_signup" for a in session.actions)
+    assert fired["browsing"] == 0
+    assert fired["ready"] / visits["ready"] > fired["considering"] / visits["considering"] > 0
+
+
+@pytest.mark.parametrize(
+    "by_channel,fragment",
+    [
+        ({"carrier_pigeon": {"browsing": 1}}, "channels not in property.yaml"),
+        ({"paid_social": {"window_shopping": 1}}, "segments not in intent.segments"),
+        ({"paid_social": {"browsing": -1, "ready": 2}}, "non-negative weights"),
+        ({"paid_social": {"browsing": 0}}, "positive sum"),
+    ],
+)
+def test_channel_segment_weights_are_validated(by_channel, fragment):
+    prop, mixer = _base_config()
+    mixer["intent"]["channel_segment_weights"] = by_channel
+    _expect_config_error(prop, mixer, fragment)
+
+
+@pytest.mark.parametrize(
+    "mutate,fragment",
+    [
+        (lambda p, m: m["identity"].update({"cross_device_device_mix": {"smartwatch": 1}}), "cross_device_device_mix names devices"),
+        (lambda p, m: m["identity"].update({"cross_device_device_mix": {"desktop": 0}}), "cross_device_device_mix needs"),
+        (lambda p, m: m["acquisition"].update({"device_channel_skew": {"mobile": {"fax": 2}}}), "device_channel_skew.mobile names channels"),
+        (lambda p, m: m["acquisition"].update({"device_channel_skew": {"mobile": {"email": -1}}}), "must not be negative"),
+        (lambda p, m: m["intent"].update({"device_conversion_factor": {"desktop": 0}}), "device_conversion_factor values"),
+        (lambda p, m: p["tracking"].update({"custom_events": [{"name": "x_signup", "on_page": ["home"], "rate": 0.1,
+                                                              "rate_by_intent": {"curious": 2}}]}), "rate_by_intent names segments"),
+    ],
+)
+def test_device_and_intent_settings_are_validated(mutate, fragment):
+    prop, mixer = _base_config()
+    mutate(prop, mixer)
+    _expect_config_error(prop, mixer, fragment)
+
+
 def test_neutral_conversion_factor_leaves_the_journey_untouched(world):
     """A factor of 1 must reproduce the configured walk exactly, key order included."""
     transitions, add_to_cart = world.scaled_journey(1.0)
@@ -1228,6 +1421,41 @@ def test_calendar_events_match_their_days():
     assert world.day_factors(dt.date(2027, 8, 25)).traffic == 1.0
 
 
+def _launch_world(new_visitors_only):
+    prop, mixer = _base_config()
+    mixer["calendar"] = [
+        {"name": "tuesday", "weekday": 2, "channels": {"email": 3.0}},
+        {"name": "launch", "from": "2026-08-25", "to": "2026-08-25", "channels": {"paid_social": 5.0},
+         "new_visitors_only": new_visitors_only},
+    ]
+    return load_world(*_write_config(prop, mixer))
+
+
+def test_new_visitors_only_keeps_returning_visits_on_their_usual_channels():
+    day = dt.date(2026, 8, 25)  # a Tuesday
+    world = _launch_world(True)
+    assert world.day_factors(day).channels == {"email": 3.0, "paid_social": 5.0}
+    # The other event still reaches returning visits; the launch does not.
+    assert world.day_factors(day).returning_channels == {"email": 3.0}
+    usual = world.returning_channel_weights()
+    returning = world.returning_channel_weights(day)
+    assert returning["paid_social"] == pytest.approx(usual["paid_social"])
+    assert returning["email"] == pytest.approx(3.0 * usual["email"])
+    assert world.channel_weights_on(day)["paid_social"] == pytest.approx(5.0 * world.channel_weights["paid_social"])
+
+
+def test_without_new_visitors_only_the_launch_reaches_returning_visits_too():
+    world = _launch_world(False)
+    factors = world.day_factors(dt.date(2026, 8, 25))
+    assert factors.returning_channels == factors.channels
+
+
+def test_new_visitors_only_must_be_a_boolean():
+    prop, mixer = _base_config()
+    mixer["calendar"] = [{"name": "bad", "weekday": 1, "channels": {"email": 2.0}, "new_visitors_only": "yes"}]
+    _expect_config_error(prop, mixer, "new_visitors_only")
+
+
 def test_calendar_rejects_unknown_channels():
     prop, mixer = _base_config()
     mixer["calendar"] = [{"name": "bad", "weekday": 1, "channels": {"tiktok": 2.0}}]
@@ -1236,10 +1464,14 @@ def test_calendar_rejects_unknown_channels():
 
 
 def test_calendar_campaign_reaches_the_export(rows):
-    """On 2026-08-25 paid social runs the summer prospecting campaign.
+    """On 2026-08-25 paid social runs the third quarter's prospecting campaign.
 
     It leads the channel while it runs. The always-on campaigns continue beside
-    it, and no other season's campaign appears.
+    it, and no other quarter's campaign appears.
+
+    Adapted by the app on 2026-10-14 (decision D-97, ORIGIN.md): its
+    configuration runs one prospecting campaign a quarter, so the campaign of
+    25 August is q3-prospecting, where upstream's is summer-prospecting.
     """
     campaigns = collections.Counter(
         row["collected_traffic_source"]["manual_campaign_name"]
@@ -1247,9 +1479,9 @@ def test_calendar_campaign_reaches_the_export(rows):
         if row["collected_traffic_source"]["manual_medium"] == "paid_social"
         and row["event_name"] == "page_view"
     )
-    assert campaigns.most_common(1)[0][0] == "summer-prospecting"
-    assert campaigns["summer-prospecting"] > sum(campaigns.values()) / 2
-    assert not {name for name in campaigns if name.endswith("-prospecting")} - {"summer-prospecting"}
+    assert campaigns.most_common(1)[0][0] == "q3-prospecting"
+    assert campaigns["q3-prospecting"] > sum(campaigns.values()) / 2
+    assert not {name for name in campaigns if name.endswith("-prospecting")} - {"q3-prospecting"}
 
 
 def test_calendar_campaign_can_replace_the_always_on_ones():
@@ -1257,7 +1489,8 @@ def test_calendar_campaign_can_replace_the_always_on_ones():
     prop, mixer = _base_config()
     mixer["acquisition"]["calendar_campaign_share"] = 1.0
     world = load_world(*_write_config(prop, mixer))
-    assert world.campaign_weights("paid_social", DAY) == {"summer-prospecting": 1.0}
+    # q3-prospecting, not upstream's summer-prospecting: see the test above.
+    assert world.campaign_weights("paid_social", DAY) == {"q3-prospecting": 1.0}
     assert set(world.campaign_weights("email", DAY)) == set(prop["channels"]["email"]["campaigns"])
 
 
@@ -1270,8 +1503,12 @@ def test_single_decay_retention_is_still_accepted():
 
 
 def test_return_curve_front_loads_returns(world):
-    """Most returns come within days, then a long tail."""
-    assert world.return_probability(1) > 3 * world.return_probability(14)
+    """Most returns come within days, then a long tail.
+
+    The attribution showcase (issue #10, insight B) lengthens consideration on
+    purpose, so day 1 is about 2.3 times day 14 rather than 3 times or more.
+    """
+    assert world.return_probability(1) > 2 * world.return_probability(14)
     assert world.return_probability(60) > 0
 
 
@@ -1316,6 +1553,15 @@ def test_server_side_purchases_can_be_switched_off():
     rows = sorted_rows_for_shard(world, DAY)
     assert not _consented_sessionless(rows)
     assert not [row for row in rows if row["batch_ordering_id"] is None]
+
+
+def test_offline_orders_can_be_switched_off():
+    """enabled: false places no offline order, whatever the rate."""
+    prop, mixer = _base_config()
+    mixer["server_side"]["offline_orders"].update({"enabled": False, "daily_rate": 0.01})
+    world = load_world(*_write_config(prop, mixer))
+    assert not world.offline_orders_enabled
+    assert not [order for offset in range(10) for order in offline_orders_on(world, DAY + dt.timedelta(days=offset))]
 
 
 def test_offline_orders_respect_the_purchase_toggle():
@@ -1453,6 +1699,18 @@ def test_consent_leaves_consenting_visitors_untouched(rows, plain_rows):
     assert {row["privacy_info"]["analytics_storage"] for row in plain_rows} == {"Yes"}
 
 
+def test_consent_can_be_switched_off(plain_rows):
+    """enabled: false gives the same shard as everyone granting, whatever the shares."""
+    prop, mixer = _base_config()
+    mixer["consent"].update({"enabled": False, "analytics_granted": 0.5, "ads_granted": 0.5})
+    mixer["session"]["missing_session_start_rate"] = 0.0
+    world = load_world(*_write_config(prop, mixer))
+    assert not world.consent_enabled
+    rows = sorted_rows_for_shard(world, DAY)
+    assert [_frozen(row) for row in rows] == [_frozen(row) for row in plain_rows]
+    assert {row["privacy_info"]["ads_storage"] for row in rows} == {"Yes"}
+
+
 # ---------------------------------------------------------------------------
 # Sessions without session_start
 # ---------------------------------------------------------------------------
@@ -1508,8 +1766,22 @@ def _offline_orders(world, days: int = 40):
     ]
 
 
-def test_some_offline_orders_carry_a_session_id(world):
+@pytest.fixture(scope="module")
+def session_id_world():
+    """Half of the offline orders send a session id. The shipped config sends none."""
+    prop, mixer = _base_config()
+    mixer["server_side"]["offline_orders"]["session_id_share"] = 0.5
+    return load_world(*_write_config(prop, mixer))
+
+
+def test_shipped_offline_orders_are_sessionless(world):
+    orders = _offline_orders(world, days=20)
+    assert orders and all(order.ga_session_id is None for order in orders)
+
+
+def test_some_offline_orders_carry_a_session_id(session_id_world):
     """A one-event session: a session id and number, and nothing else a browser adds."""
+    world = session_id_world
     orders = _offline_orders(world)
     with_session = [order for order in orders if order.ga_session_id is not None]
     assert with_session and len(with_session) < len(orders)
@@ -1538,7 +1810,8 @@ def test_some_offline_orders_carry_a_session_id(world):
             assert _param(row, "ga_session_id") is None and _param(row, "ga_session_number") is None
 
 
-def test_a_server_side_purchase_needs_both_session_parameters_or_neither(world):
+def test_a_server_side_purchase_needs_both_session_parameters_or_neither(session_id_world):
+    world = session_id_world
     order = next(order for order in _offline_orders(world) if order.ga_session_id is not None)
     (row,) = serialize_session(world, order)
     day = order.started.astimezone(ZoneInfo(world.timezone)).date()
@@ -1559,6 +1832,8 @@ def test_offline_order_session_ids_can_be_switched_off():
         (lambda m: m["consent"].update({"analytics_granted": 1.2}), "consent.analytics_granted"),
         (lambda m: m["session"].update({"missing_session_start_rate": -0.1}), "missing_session_start_rate"),
         (lambda m: m["server_side"]["offline_orders"].update({"session_id_share": 2}), "session_id_share"),
+        (lambda m: m["server_side"]["offline_orders"].update({"enabled": "no"}), "offline_orders.enabled"),
+        (lambda m: m["consent"].update({"enabled": "no"}), "consent.enabled"),
     ],
 )
 def test_consent_and_missing_start_dials_are_validated(mutate, fragment):
@@ -1777,9 +2052,12 @@ def test_a_direct_session_reports_the_last_non_direct_campaign(world):
             if (DAY - day).days > lookback:
                 break
             earlier = build_session(world, visitor, number, day, ordinal=ordinal)
+            if session.started - earlier.started > dt.timedelta(days=lookback):
+                break  # the window is exact, not counted in calendar days
             if earlier.last_click_channel != "direct":
                 expected, clicked_in = earlier.last_click_channel, earlier
                 break
+        assert session.started - clicked_in.started <= dt.timedelta(days=lookback)
         # The source is the one that earlier click drew, not just its channel's.
         clicked = world.acquisition(expected, visitor.user_pseudo_id, int(clicked_in.started.timestamp()))
         assert clicked["source"] in _declared_sources(channels[expected])
@@ -1976,3 +2254,295 @@ def test_visitors_come_from_a_long_tail_of_countries(world, rows):
     assert countries.most_common(1)[0][0] == "United States"
     home = sum(count for _, count in countries.most_common(6))
     assert 0.80 < home / sum(countries.values()) < 0.92
+
+
+# ---------------------------------------------------------------------------
+# Values the export carries verbatim
+# ---------------------------------------------------------------------------
+
+
+def _fixed_values_world():
+    prop, mixer = _base_config()
+    prop["property"].update(currency="EUR", usd_exchange_rate=1.1, default_language="xx-yy")
+    prop["geos"]["fr_paris"]["language"] = "fr-fr"
+    prop["channels"]["paid_search"]["channel_group"] = "Cross-network"
+    prop["channels"]["paid_search"]["google_ads"] = {"customer_id": "1234567890", "account_name": "{brand} Ads"}
+    prop["ecommerce"].update(
+        transaction_id_prefix="T-",
+        shipping_tier={"choice": {"Standard": 50, "Express": 50}},
+        payment_type="PayPal",
+        view_item_list_name=None,
+    )
+    mixer["server_side"]["offline_orders"]["line_item_weights"] = {2: 1}
+    return load_world(*_write_config(prop, mixer))
+
+
+def test_fixed_values_follow_the_config():
+    """Every value that used to be a constant in code now comes from the config."""
+    world = _fixed_values_world()
+    rows = sorted_rows_for_shard(world, DAY)
+    assert not validate_rows(rows)
+    failures = {k: v for k, v in run_all(world, DAY, rows).items() if v}
+    assert not failures, failures
+
+    purchases = [r for r in rows if r["event_name"] == "purchase"]
+    assert purchases
+    for row in purchases:
+        ecommerce = row["ecommerce"]
+        assert ecommerce["transaction_id"].startswith("T-")
+        assert ecommerce["purchase_revenue_in_usd"] == round(ecommerce["purchase_revenue"] * 1.1 + 1e-9, 2)
+        assert row["event_value_in_usd"] is not None
+        for item in row["items"]:
+            assert item["price_in_usd"] == round(item["price"] * 1.1 + 1e-9, 2)
+
+    languages = {(r["geo"]["country"], r["device"]["language"]) for r in rows}
+    assert ("France", "fr-fr") in languages and ("Germany", "xx-yy") in languages
+    assert ("United States", "en-us") in languages
+
+    paid = [r for r in rows if r["session_traffic_source_last_click"]["google_ads_campaign"]["customer_id"]]
+    assert paid
+    for row in paid:
+        click = row["session_traffic_source_last_click"]
+        assert click["google_ads_campaign"]["customer_id"] == "1234567890"
+        assert click["google_ads_campaign"]["account_name"] == "GA4Dataform Ads"
+        assert click["cross_channel_campaign"]["default_channel_group"] == "Cross-network"
+
+    tiers = {_param(r, "shipping_tier") for r in rows if r["event_name"] == "add_shipping_info"}
+    assert tiers == {"Standard", "Express"}
+    assert {_param(r, "payment_type") for r in rows if r["event_name"] == "add_payment_info"} == {"PayPal"}
+    for row in (r for r in rows if r["event_name"] == "view_item"):
+        assert all(item["item_list_name"] is None and item["item_list_id"] is None for item in row["items"])
+
+    offline = list(offline_orders_on(world, DAY))
+    assert offline
+    assert all(len(session.actions[0].payload["cart"]) == 2 for session in offline)
+
+
+def test_shipping_tier_is_stable_within_a_session():
+    world = _fixed_values_world()
+    rows = sorted_rows_for_shard(world, DAY)
+    for events in _by_session(rows).values():
+        tiers = {_param(r, "shipping_tier") for r in events if r["event_name"] == "add_shipping_info"}
+        assert len(tiers) <= 1
+
+
+@pytest.mark.parametrize(
+    "mutate,fragment",
+    [
+        (lambda p, m: p["property"].update(currency="EUR", usd_exchange_rate=None), "usd_exchange_rate is required"),
+        (lambda p, m: p["property"].update(usd_exchange_rate=1.2), "must be 1.0 when property.currency is USD"),
+        (lambda p, m: p["property"].update(currency="EUR", usd_exchange_rate=0), "must be a positive number"),
+        (lambda p, m: p["geos"]["fr_paris"].update(language=""), "geos.fr_paris.language"),
+        (lambda p, m: p["channels"]["email"].update(google_ads={"customer_id": "1"}), "no effect without `gclid: true`"),
+        (lambda p, m: p["channels"]["paid_search"]["google_ads"].update(customer_id="abc"), "must be digits"),
+        (lambda p, m: p["channels"]["paid_search"]["google_ads"].update(account_name="{site}"), "may only use the {brand} field"),
+        (lambda p, m: p["channels"]["paid_search"]["google_ads"].update(manager="x"), "unknown keys"),
+        (lambda p, m: p["channels"]["email"].update(channel_group=""), "channel_group must be a non-empty string"),
+        (lambda p, m: p["ecommerce"].update(shipping_tier={"int_range": [1, 2]}), "must be a literal or a {choice"),
+        (lambda p, m: p["ecommerce"].update(transaction_id_prefix=7), "transaction_id_prefix must be a string"),
+        (lambda p, m: m["server_side"]["offline_orders"].update(line_item_weights={4: 1}), "more than cart.max_line_items"),
+        (lambda p, m: m["server_side"]["offline_orders"].update(line_item_weights={0: 1}), "1 or greater"),
+        (lambda p, m: m["retention"].update(decay_days=30), "both return_curve and decay_days"),
+        (lambda p, m: p["tracking"].update(user_properties={"x": {"template": "{page_path}"}}),
+         "a user property template can only use"),
+    ],
+)
+def test_fixed_values_are_validated(mutate, fragment):
+    prop, mixer = _base_config()
+    mutate(prop, mixer)
+    _expect_config_error(prop, mixer, fragment)
+
+
+def test_defaults_match_the_shipped_config():
+    """Leaving the new keys out reproduces the values an old config got.
+
+    So a configuration written before those keys existed keeps its output.
+    """
+    prop, mixer = _base_config()
+    prop["property"].pop("usd_exchange_rate")
+    prop["property"].pop("default_language")
+    for geo in prop["geos"].values():
+        geo.pop("language", None)
+    for cfg in prop["channels"].values():
+        cfg.pop("channel_group", None)
+        cfg.pop("google_ads", None)
+    for key in ("transaction_id_prefix", "shipping_tier", "payment_type", "view_item_list_name"):
+        prop["ecommerce"].pop(key)
+    # The code default is an empty prefix, not this brand's "GD-".
+    prop["ecommerce"]["transaction_id_prefix"] = "GD-"
+    mixer["server_side"]["offline_orders"].pop("line_item_weights")
+    bare = load_world(*_write_config(prop, mixer))
+    shipped = load_world(*_write_config(*_base_config()))
+    for geo in shipped.section("geos").values():
+        assert bare.language(geo) == shipped.language(geo)
+    for channel in shipped.section("channels"):
+        assert bare.channel_group(channel) == shipped.channel_group(channel)
+    assert bare.google_ads_account("paid_search") == shipped.google_ads_account("paid_search")
+    # Adapted by the app on 2026-10-14 (decision D-97, ORIGIN.md): these
+    # three are set by the app's configuration, which sells software and
+    # posts nothing, so they no longer equal the code's defaults. The
+    # guarantee is the same one: a configuration that leaves the keys out
+    # still gets the values it always got.
+    assert bare.ecommerce_setting("shipping_tier") == "Standard"
+    assert bare.ecommerce_setting("payment_type") == "Credit Card"
+    assert bare.ecommerce_setting("view_item_list_name") == "Product detail"
+    assert bare.offline_line_item_weights == shipped.offline_line_item_weights
+    assert bare.usd_exchange_rate == shipped.usd_exchange_rate == 1.0
+
+
+# ---------------------------------------------------------------------------
+# Scenarios and the lead funnel
+# ---------------------------------------------------------------------------
+
+from ga4synth.cli import main as cli_main  # noqa: E402
+from ga4synth.world import available_scenarios, scenario_paths  # noqa: E402
+
+SCENARIOS = ("default", "lead-generation", "ecommerce", "eu-consent")
+
+
+def _scenario_world(name):
+    return load_world(*scenario_paths(name))
+
+
+@pytest.fixture(scope="module")
+def lead_rows():
+    world = _scenario_world("lead-generation")
+    return world, sorted_rows_for_shard(world, DAY)
+
+
+def test_the_shipped_scenarios_are_all_there():
+    assert set(SCENARIOS) <= set(available_scenarios())
+
+
+@pytest.mark.parametrize("name", SCENARIOS)
+def test_every_scenario_passes_every_invariant(name):
+    world = _scenario_world(name)
+    rows = sorted_rows_for_shard(world, DAY)
+    assert rows
+    assert not validate_rows(rows)
+    failures = {k: v for k, v in run_all(world, DAY, rows).items() if v}
+    assert not failures, failures
+
+
+def test_lead_events_carry_their_parameters(lead_rows):
+    world, rows = lead_rows
+    leads = [r for r in rows if r["event_name"] == "generate_lead"]
+    assert len(leads) > 10
+    for row in leads:
+        assert _param(row, "value") == 150
+        assert _param(row, "currency") == "USD"
+        assert _param(row, "lead_source") in {"website", "webinar"}
+        assert row["event_value_in_usd"] == 150.0
+    submits = [r for r in rows if r["event_name"] == "form_submit"]
+    assert submits
+    for row in submits:
+        assert _param(row, "form_id") == "demo-request"
+        assert _param(row, "form_name") == "demo"
+        assert _param(row, "form_submit_text") == "Book my demo"
+        assert _param(row, "form_destination") == "https://ga4dataform.com/demo/thank-you"
+    starts = [r for r in rows if r["event_name"] == "form_start"]
+    assert len(starts) > len(submits), "some visitors start the form and leave"
+    assert all(_param(r, "form_submit_text") is None for r in starts)
+
+
+def test_a_lead_follows_its_form_in_the_same_session(lead_rows):
+    _, rows = lead_rows
+    checked = 0
+    for events in _by_session(rows).values():
+        names = [r["event_name"] for r in events]
+        if "generate_lead" not in names:
+            continue
+        assert names.index("form_start") < names.index("form_submit") < names.index("generate_lead")
+        assert _param(events[-1], "session_engaged") == "1"
+        checked += 1
+    assert checked > 10
+
+
+def test_lead_funnel_nesting_check_can_fail(lead_rows):
+    world, rows = lead_rows
+    broken = [r for r in rows if r["event_name"] != "form_start"]
+    assert run_all(world, DAY, broken)["check_funnel_nesting"]
+
+
+def test_a_page_type_can_have_several_urls(lead_rows):
+    _, rows = lead_rows
+    blog = {
+        _param(r, "page_location") for r in rows
+        if r["event_name"] == "page_view" and "/blog/" in _param(r, "page_location")
+    }
+    assert len(blog) == 4
+
+
+def test_default_scenario_is_a_basic_install():
+    """The app's `default` is the same site as `ecommerce` without the shop.
+
+    The only test here the app changed in the sync of D-95 (see ORIGIN.md).
+    Upstream's `default` is another site altogether: a studio with a contact
+    form, no consent banner and no sign-in. The app does not take it (D-23),
+    so this test describes what the app's `default` is instead: the same site
+    as `ecommerce` with no shop, which keeps the consent banner and the
+    sign-in.
+    """
+    world = _scenario_world("default")
+    rows = sorted_rows_for_shard(world, DAY)
+    names = {r["event_name"] for r in rows}
+    assert not names & {
+        "view_item_list", "select_item", "view_item", "add_to_cart", "view_cart",
+        "begin_checkout", "add_shipping_info", "add_payment_info", "purchase",
+    }, "no event of a shop"
+    assert not names & {"form_start", "form_submit", "generate_lead"}, "no lead funnel"
+    assert all(not r["items"] for r in rows), "no item"
+    assert any(r["user_pseudo_id"] is None for r in rows), "a consent banner"
+    assert any(r["user_id"] is not None for r in rows), "a sign-in"
+
+
+def test_eu_scenario_converts_currency_and_reports_local_languages():
+    world = _scenario_world("eu-consent")
+    rows = sorted_rows_for_shard(world, DAY)
+    denied = sum(1 for r in rows if r["user_pseudo_id"] is None)
+    assert 0.3 < denied / len(rows) < 0.6
+    purchase = next(r for r in rows if r["event_name"] == "purchase")
+    assert purchase["ecommerce"]["purchase_revenue_in_usd"] == round(
+        purchase["ecommerce"]["purchase_revenue"] * 1.1 + 1e-9, 2
+    )
+    languages = {(r["geo"]["country"], r["device"]["language"]) for r in rows}
+    assert ("Germany", "de-de") in languages and ("France", "fr-fr") in languages
+
+
+def _lead_config():
+    return (
+        yaml.safe_load(open(scenario_paths("lead-generation")[0])),
+        yaml.safe_load(open(scenario_paths("lead-generation")[1])),
+    )
+
+
+@pytest.mark.parametrize(
+    "mutate,fragment",
+    [
+        (lambda p, m: m["journey"]["transitions"]["pricing"].update(lead_confirmation=5),
+         "only contact can"),
+        (lambda p, m: m["journey"]["entry_weights"].update(lead_confirmation=5),
+         "cannot include lead_confirmation"),
+        (lambda p, m: p["tracking"]["events"].update(form_submit=False),
+         "the lead funnel must be enabled as an unbroken run"),
+        (lambda p, m: p["leads"].update(score=5), "leads has unknown keys"),
+        (lambda p, m: p["leads"].update(value=-1), "leads.value must be a non-negative number"),
+        (lambda p, m: p["leads"].update(value={"template": "{page_path}"}), "leads.value may only use"),
+        (lambda p, m: p["pages"]["blog"].append({"title": "x"}), "is missing 'path'"),
+        (lambda p, m: p["pages"]["pricing"].update(weight=2), "only applies to a list"),
+        (lambda p, m: m["journey"].update(form_start_rate=2), "form_start_rate must be a probability"),
+        (lambda p, m: p["tracking"]["custom_events"].append(
+            {"name": "generate_lead", "on_page": ["home"], "rate": 0.1}), "standard GA4 event"),
+    ],
+)
+def test_lead_config_is_validated(mutate, fragment):
+    prop, mixer = _lead_config()
+    mutate(prop, mixer)
+    _expect_config_error(prop, mixer, fragment)
+
+
+def test_cli_scenario_flag(capsys):
+    assert cli_main(["summary", "--scenario", "no-such-scenario", "--date", "2026-08-25"]) == 2
+    assert "available: " in capsys.readouterr().err
+    assert cli_main(["summary", "--scenario", "default", "--property", "x.yaml", "--date", "2026-08-25"]) == 2
+    assert "--scenario replaces --property" in capsys.readouterr().err

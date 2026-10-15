@@ -1,4 +1,9 @@
-# What the property IS.
+# Scenario: E-commerce. What the property IS.
+#
+# GA4Dataform, a business software website whose visitors buy their plan and
+# their add-ons online (decision D-97). It is the same website as
+# config/default/, config/eu-consent/ and config/lead-generation/, seen from
+# the angle of a shop. See mixer.yaml for what this scenario is for.
 #
 # This file defines identity and structure: the site, its products, its pages,
 # and what it collects. It answers "what does this property look like", never
@@ -19,16 +24,22 @@ property:
   # analytics_<property_id>, so the two are different numbers in a real export
   # and are not expected to match.
   stream_id: "7700000002"
-  hostname: "www.northmoor-supply.example"
-  brand: "Northmoor Supply"
+  hostname: "ga4dataform.com"
+  brand: "GA4Dataform"
   currency: "USD"
+  # US dollars per unit of `currency`. The *_in_usd fields (price_in_usd,
+  # purchase_revenue_in_usd, event_value_in_usd, ...) hold every amount
+  # converted at this rate. Must be 1.0 for USD, and is required otherwise.
+  usd_exchange_rate: 1.0
+  # device.language for a visitor whose geo sets no `language` of its own.
+  default_language: "en-gb"
   # Reporting timezone. Determines which events_YYYYMMDD shard a row lands in,
   # which is the single most common correctness bug in synthetic GA4 data.
   timezone: "America/New_York"
 
 seed:
   # Change this and the entire dataset changes. Keep it fixed once published.
-  master: "northmoor-supply-v1"
+  master: "scenario-ecommerce-v1"
 
 # ---------------------------------------------------------------------------
 # Ecommerce
@@ -43,9 +54,24 @@ seed:
 ecommerce:
   enabled: true
   tax_rate: 0.0875
-  shipping_flat: 9.95
-  # Orders at or above this subtotal ship free.
-  free_shipping_threshold: 150.0
+  # Nothing is posted: a plan is software, delivered to the account. Both
+  # amounts are zero, so every order carries a shipping of 0.00.
+  shipping_flat: 0.0
+  # Orders at or above this subtotal ship free. At 0.0 every order does.
+  free_shipping_threshold: 0.0
+  # Prepended to the 12-digit number that forms every transaction_id.
+  transaction_id_prefix: "GD-"
+  # The shipping_tier parameter of add_shipping_info and the payment_type
+  # parameter of add_payment_info. Each is a literal, or a weighted choice
+  # drawn once per session, for example:
+  #   shipping_tier: {choice: {Standard: 80, Express: 20}}
+  shipping_tier: "Digital delivery"
+  # A business pays by card, through PayPal or by bank transfer. The consumer
+  # methods of a retail shop are gone.
+  payment_type: {choice: {"Credit Card": 70, PayPal: 20, "Bank transfer": 10}}
+  # item_list_name on view_item. GA4 records whatever the site sends; null
+  # leaves item_list_name, item_list_id and item_list_index NULL.
+  view_item_list_name: "Plan detail"
 
 # ---------------------------------------------------------------------------
 # Acquisition channels
@@ -54,18 +80,29 @@ ecommerce:
 # and every key here must appear there.
 #
 # `campaign`, `term` and `content` populate collected_traffic_source and the
-# utm-style event_params. `gclid: true` marks Google Ads paid traffic.
+# utm-style event_params; null leaves them unset. `gclid: true` marks Google
+# Ads paid traffic. `channel_group` is what GA4 reports as
+# default_channel_group; left out, the seven shipped channel keys report their
+# usual group and any other key reports "Unassigned".
 #
 # A channel that runs several campaigns at once lists them under `campaigns`
 # instead of `campaign`, each with a relative weight. Every acquisition picks
 # one. An entry is a bare weight, or a mapping with `weight` and optionally its
 # own `term`, `content` and, for Google Ads, `ad_group`. The ad group defaults
 # to the campaign name, and the Google Ads ids are derived from the names.
+# The channel-level `term` and `content` apply to campaigns that set none.
 # Calendar events in mixer.yaml can add a campaign on their days.
+#
+# A `gclid` channel reports the Google Ads account under `google_ads`:
+# `customer_id` (digits) and `account_name`, which may use {brand}.
 channels:
   organic_search:
+    channel_group: "Organic Search"
     source: google
     medium: organic
+    campaign: null
+    term: null
+    content: null
     referrer: "https://www.google.com/"
     # A channel is rarely one site. `other_sources` lists the rest of it, each
     # with its own referrer, and an optional `medium` if it differs. Weights are
@@ -73,76 +110,100 @@ channels:
     # with a `gclid` cannot use this: a click id belongs to one ad platform.
     source_weight: 90
     other_sources:
-      bing:       {weight: 5, referrer: "https://www.bing.com/"}
-      duckduckgo: {weight: 3, referrer: "https://duckduckgo.com/"}
-      yahoo:      {weight: 2, referrer: "https://search.yahoo.com/"}
+      bing:       {weight: 5, medium: organic, referrer: "https://www.bing.com/"}
+      duckduckgo: {weight: 3, medium: organic, referrer: "https://duckduckgo.com/"}
+      yahoo:      {weight: 2, medium: organic, referrer: "https://search.yahoo.com/"}
   direct:
+    channel_group: "Direct"
     source: "(direct)"
     medium: "(none)"
+    campaign: null
+    term: null
+    content: null
     referrer: null
   paid_search:
+    channel_group: "Paid Search"
     source: google
     medium: cpc
+    term: null
+    content: null
     campaigns:
-      brand-core:         {weight: 45, term: "northmoor supply", ad_group: "brand-exact"}
-      nonbrand-outerwear: {weight: 30, term: "waxed chore jacket", ad_group: "chore-jackets-phrase"}
-      shopping-catalog:   {weight: 20, ad_group: "all-products"}
-      competitor-terms:   {weight: 5, term: "heritage workwear brands", ad_group: "competitors-broad"}
+      brand-core:       {weight: 45, term: "ga4dataform", ad_group: "brand-exact"}
+      nonbrand-export:  {weight: 30, term: "ga4 bigquery export", ad_group: "bigquery-export-phrase"}
+      plans-pmax:       {weight: 20, ad_group: "all-plans"}
+      competitor-terms: {weight: 5, term: "ga4 reporting tools", ad_group: "competitors-broad"}
     gclid: true
+    google_ads:
+      customer_id: "4477112200"
+      account_name: "{brand} | Search"
     referrer: "https://www.google.com/"
   paid_social:
-    source: facebook
+    channel_group: "Paid Social"
+    source: linkedin
     medium: paid_social
-    # The seasonal prospecting campaign comes from the calendar in mixer.yaml.
+    # The quarterly prospecting campaign comes from the calendar in mixer.yaml.
     # These two run all year beside it.
     campaigns:
-      retargeting-dpa:       {weight: 60, content: "catalog-dynamic"}
-      lookalike-purchasers:  {weight: 40, content: "video-15s"}
+      retargeting-trial:    {weight: 60, content: "single-image"}
+      lookalike-data-teams: {weight: 40, content: "video-30s"}
+    term: null
     content: "carousel-a"
-    referrer: "https://l.facebook.com/"
+    referrer: "https://www.linkedin.com/"
     source_weight: 70
     other_sources:
-      instagram: {weight: 30, referrer: "https://l.instagram.com/"}
+      youtube: {weight: 30, medium: paid_social, referrer: "https://www.youtube.com/"}
   organic_social:
-    source: instagram
+    channel_group: "Organic Social"
+    source: linkedin
     medium: social
-    referrer: "https://l.instagram.com/"
+    campaign: null
+    term: null
+    content: null
+    referrer: "https://www.linkedin.com/"
     source_weight: 55
     other_sources:
-      facebook:  {weight: 20, referrer: "https://l.facebook.com/"}
-      pinterest: {weight: 12, referrer: "https://www.pinterest.com/"}
-      tiktok:    {weight: 6,  referrer: "https://www.tiktok.com/"}
-      youtube:   {weight: 4,  referrer: "https://www.youtube.com/"}
-      reddit:    {weight: 3,  referrer: "https://www.reddit.com/"}
+      youtube:  {weight: 20, medium: social, referrer: "https://www.youtube.com/"}
+      reddit:   {weight: 12, medium: social, referrer: "https://www.reddit.com/"}
+      x:        {weight: 9,  medium: social, referrer: "https://x.com/"}
+      facebook: {weight: 4,  medium: social, referrer: "https://l.facebook.com/"}
   email:
+    channel_group: "Email"
     source: newsletter
     medium: email
+    term: null
+    content: null
     campaigns:
-      weekly-digest:   60
-      welcome-series:  15
-      abandoned-cart:  15
-      back-in-stock:   10
+      product-update:    55
+      onboarding-series: 20
+      abandoned-cart:    15
+      plan-renewal:      10
     referrer: null
   referral:
-    source: "gearjournal.example"
+    channel_group: "Referral"
+    source: "analyticsreview.example"
     medium: referral
-    referrer: "https://gearjournal.example/reviews/"
+    campaign: null
+    term: null
+    content: null
+    referrer: "https://analyticsreview.example/reviews/"
     source_weight: 45
     other_sources:
-      "outdoorweekly.example": {weight: 22, referrer: "https://outdoorweekly.example/best-chore-coats/"}
-      "chatgpt.com":           {weight: 15, referrer: "https://chatgpt.com/"}
-      "dealsroundup.example":  {weight: 10, referrer: "https://dealsroundup.example/"}
-      "workwearforum.example": {weight: 8,  referrer: "https://workwearforum.example/threads/"}
+      "datastackweekly.example": {weight: 22, medium: referral, referrer: "https://datastackweekly.example/ga4-models/"}
+      "chatgpt.com":             {weight: 15, medium: referral, referrer: "https://chatgpt.com/"}
+      "bigquerytips.example":    {weight: 10, medium: referral, referrer: "https://bigquerytips.example/"}
+      "analyticsforum.example":  {weight: 8,  medium: referral, referrer: "https://analyticsforum.example/threads/"}
 
 # ---------------------------------------------------------------------------
 # Devices
 # ---------------------------------------------------------------------------
 # Identity only; the mix lives in mixer.yaml `device_mix`. `brand` becomes
-# device.mobile_brand_name, which real exports leave empty for desktop.
+# device.mobile_brand_name, which real exports leave empty for desktop: an
+# empty list leaves it empty.
 devices:
   desktop:
     os: ["Windows", "Macintosh"]
     browser: ["Chrome", "Safari", "Edge", "Firefox"]
+    brand: []
   mobile:
     os: ["iOS", "Android"]
     browser: ["Chrome", "Safari"]
@@ -157,7 +218,8 @@ devices:
 # ---------------------------------------------------------------------------
 # Keyed so the mix can be tuned separately; every key must appear in mixer.yaml
 # `geo_mix`. sub_continent and continent must agree with country, so they are
-# specified together rather than derived.
+# specified together rather than derived. `language` becomes device.language;
+# a geo without one uses property.default_language.
 geos:
   us_new_york:
     country: "United States"
@@ -166,6 +228,7 @@ geos:
     metro: "New York, NY"
     continent: "Americas"
     sub_continent: "Northern America"
+    language: "en-us"
   us_los_angeles:
     country: "United States"
     region: "California"
@@ -173,6 +236,7 @@ geos:
     metro: "Los Angeles-Long Beach-Santa Ana, CA"
     continent: "Americas"
     sub_continent: "Northern America"
+    language: "en-us"
   us_chicago:
     country: "United States"
     region: "Illinois"
@@ -180,6 +244,7 @@ geos:
     metro: "Chicago IL"
     continent: "Americas"
     sub_continent: "Northern America"
+    language: "en-us"
   ca_toronto:
     country: "Canada"
     region: "Ontario"
@@ -187,6 +252,7 @@ geos:
     metro: "(not set)"
     continent: "Americas"
     sub_continent: "Northern America"
+    language: "en-us"
   uk_london:
     country: "United Kingdom"
     region: "England"
@@ -194,6 +260,7 @@ geos:
     metro: "London"
     continent: "Europe"
     sub_continent: "Northern Europe"
+    language: "en-us"
   de_berlin:
     country: "Germany"
     region: "Berlin"
@@ -208,6 +275,7 @@ geos:
     metro: "(not set)"
     continent: "Oceania"
     sub_continent: "Australasia"
+    language: "en-us"
   fr_paris:
     country: "France"
     region: "Ile-de-France"
@@ -268,57 +336,95 @@ geos:
 # ---------------------------------------------------------------------------
 # Product catalogue
 # ---------------------------------------------------------------------------
-# Prices are in `property.currency`. Ignored entirely when ecommerce is off.
+# Prices are in `property.currency`. They are what the software costs: a plan
+# is billed monthly or yearly, an add-on sits on top of a plan, and a service
+# is bought once. With ecommerce off the prices and variants go unused, but
+# plp pages still take their category from here.
+#
+# `variants` becomes item_variant. For a plan it is the billing term, for a
+# service the way it is delivered.
 catalogue:
-  - {item_id: "NM-1001", item_name: "Fieldhand Canvas Tote", category: "Bags", price: 68.00, variants: ["Olive", "Sand", "Black"]}
-  - {item_id: "NM-1002", item_name: "Dockyard Waxed Backpack", category: "Bags", price: 148.00, variants: ["Navy", "Brown"]}
-  - {item_id: "NM-2001", item_name: "Ridgeline Merino Crew", category: "Knitwear", price: 96.00, variants: ["Heather Grey", "Charcoal", "Rust"]}
-  - {item_id: "NM-2002", item_name: "Harbour Cable Knit", category: "Knitwear", price: 124.50, variants: ["Cream", "Navy"]}
-  - {item_id: "NM-3001", item_name: "Trailhead Chore Jacket", category: "Outerwear", price: 189.00, variants: ["Olive", "Slate"]}
-  - {item_id: "NM-3002", item_name: "Stormline Shell", category: "Outerwear", price: 265.00, variants: ["Black", "Forest"]}
-  - {item_id: "NM-4001", item_name: "Blackfell Leather Belt", category: "Accessories", price: 54.00, variants: ["Tan", "Black"]}
-  - {item_id: "NM-4002", item_name: "Copperworks Beanie", category: "Accessories", price: 32.00, variants: ["Charcoal", "Mustard"]}
-  - {item_id: "NM-4003", item_name: "Selkirk Wool Socks", category: "Accessories", price: 18.50, variants: ["Grey", "Navy", "Oatmeal"]}
-  - {item_id: "NM-5001", item_name: "Quarryman Work Trouser", category: "Trousers", price: 112.00, variants: ["Khaki", "Black", "Indigo"]}
+  - {item_id: "GD-PLAN-01", item_name: "Starter plan", category: "Subscriptions", price: 49.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-PLAN-02", item_name: "Pro plan", category: "Subscriptions", price: 149.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-PLAN-03", item_name: "Business plan", category: "Subscriptions", price: 399.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-PLAN-04", item_name: "Enterprise plan", category: "Subscriptions", price: 999.00, variants: ["Annual"]}
+  - {item_id: "GD-ADD-01", item_name: "Attribution add-on", category: "Add-ons", price: 79.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-ADD-02", item_name: "Consent mode add-on", category: "Add-ons", price: 39.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-ADD-03", item_name: "Five extra seats", category: "Add-ons", price: 25.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-SUP-01", item_name: "Priority support", category: "Support", price: 99.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-SRV-01", item_name: "Onboarding workshop", category: "Services", price: 450.00, variants: ["Remote", "On site"]}
+  - {item_id: "GD-SRV-02", item_name: "Tracking audit", category: "Services", price: 750.00, variants: ["Remote", "On site"]}
 
 # Search terms used by view_search_results.
-search_terms: ["tote bag", "merino", "waxed jacket", "wool socks", "belt", "beanie", "chore coat"]
+search_terms: ["pricing", "bigquery export", "attribution", "sessions model", "consent mode", "api", "dataform"]
 
 # Outbound links used by the enhanced-measurement `click` event.
 outbound_links:
-  - "https://gearjournal.example/reviews/northmoor"
-  - "https://www.instagram.com/northmoorsupply"
+  - "https://analyticsreview.example/reviews/ga4dataform"
+  - "https://www.linkedin.com/company/ga4dataform"
 
 # ---------------------------------------------------------------------------
 # Pages
 # ---------------------------------------------------------------------------
-# Path and title for each page type. Both are templates; available fields are
-# {brand}, {category}, {category_slug}, {item_name}, {item_slug}, {search_term}
-# and {search_query}, depending on the page type.
+# Path and title for each page type. Both are templates. {brand} works on every
+# page; plp adds {category} and {category_slug}; pdp adds {item_name},
+# {item_slug} and {item_id}; search adds {search_term} and {search_query}.
 #
-# The page *type* names are a fixed vocabulary, because the funnel semantics
-# attached to them live in code (a pdp emits view_item, a checkout emits
-# begin_checkout, and so on). You can freely change what each one looks like;
-# you cannot yet invent a new type.
+# Some page types have semantics in code: a pdp emits view_item, a checkout
+# emits begin_checkout, a contact page carries a form (form_start,
+# form_submit) and lead_confirmation emits generate_lead. Those are home, plp,
+# pdp, search, blog, cart, checkout, purchased, contact and lead_confirmation.
+# Any other name is a plain page: it sends page_view and the enhanced
+# measurement events, nothing else. Walk it in mixer.yaml `journey` like any
+# other page.
 #
-# pdp, plp, cart, checkout and purchased require `ecommerce.enabled: true`.
-# home, blog and search work either way.
+# A page type may also be a list of {path, title, weight} for a type with
+# several URLs, such as articles; a visit picks one by weight:
+#   blog:
+#     - {path: "/blog/query-costs", title: "What a query costs | {brand}", weight: 3}
+#     - {path: "/blog/release-notes", title: "Release notes | {brand}", weight: 1}
+#
+# pdp, cart, checkout and purchased require `ecommerce.enabled: true`.
+# home, plp, blog and search work either way: with ecommerce off a plp is a
+# plain page_view, without view_item_list.
+# The four configurations share this structure, so that the four datasets
+# read as one website: home, features, pricing, docs and blog, plus a search
+# page and, where the site has a sign-in, a login page. Each one adds only
+# the pages its own funnel needs: here the shop, which is plp, pdp, cart,
+# checkout and purchased.
 pages:
   home:
     path: "/"
-    title: "{brand}"
+    title: "{brand} | GA4 reporting models for BigQuery"
+  features:
+    - {path: "/features/data-models", title: "Data models | {brand}", weight: 40}
+    - {path: "/features/attribution", title: "Attribution | {brand}", weight: 35}
+    - {path: "/features/dashboards", title: "Dashboards | {brand}", weight: 25}
+  pricing:
+    path: "/pricing"
+    title: "Pricing | {brand}"
+  docs:
+    - {path: "/docs/quickstart", title: "Quickstart | {brand}", weight: 40}
+    - {path: "/docs/bigquery-export", title: "The BigQuery export | {brand}", weight: 25}
+    - {path: "/docs/sql-models", title: "SQL models | {brand}", weight: 20}
+    - {path: "/docs/api", title: "API reference | {brand}", weight: 15}
   plp:
-    path: "/collections/{category_slug}"
+    path: "/plans/{category_slug}"
     title: "{category} | {brand}"
   pdp:
-    path: "/products/{item_slug}"
+    path: "/product/{item_slug}"
     title: "{item_name} | {brand}"
   search:
     path: "/search?q={search_query}"
     title: "Search results | {brand}"
   blog:
-    path: "/journal/how-we-wax-canvas"
-    title: "How we wax canvas | {brand}"
+    - {path: "/blog/sessions-in-bigquery", title: "Sessions in BigQuery | {brand}", weight: 35}
+    - {path: "/blog/consent-mode-and-modelling", title: "Consent mode and modelling | {brand}", weight: 25}
+    - {path: "/blog/attribution-without-guesswork", title: "Attribution without guesswork | {brand}", weight: 25}
+    - {path: "/blog/what-a-query-costs", title: "What a query costs | {brand}", weight: 15}
+  login:
+    - {path: "/login", title: "Log in | {brand}", weight: 70}
+    - {path: "/signup", title: "Create your account | {brand}", weight: 30}
   cart:
     path: "/cart"
     title: "Your cart | {brand}"
@@ -397,16 +503,31 @@ tracking:
 
   # Events unique to this property. Each fires on the listed page types with the
   # given per-page probability. Standard GA4 event names are rejected here.
-  custom_events: []
+  # Signups and trial starts mark future buyers. `trial_start` is the free
+  # trial a visitor starts from a plan page, before paying for the plan.
+  custom_events:
+    - name: newsletter_signup
+      on_page: [blog, home]
+      rate: 0.04
+      rate_by_intent: {browsing: 0.3, considering: 2.5, ready: 1.5}
+      params: {}
+    - name: trial_start
+      on_page: [pdp]
+      rate: 0.05
+      rate_by_intent: {browsing: 0.4, considering: 2.0, ready: 1.2}
+      params: {}
   # Example:
   #   - name: newsletter_signup
   #     on_page: [blog, home]
   #     rate: 0.06
+  #     rate_by_intent: {browsing: 0.3, considering: 2.5, ready: 1.5}   # optional
   #     params:
   #       signup_source: {template: "{page_path}"}
 
   # User-scoped properties. Values are stable for the lifetime of a visitor and
-  # are attached to every one of their events, as GA4 does.
+  # are attached to every one of their events, as GA4 does. They use the same
+  # value language as global_params, but a template can only use
+  # {user_pseudo_id}: a user property belongs to no single event.
   user_properties: {}
   # Example:
   #   customer_tier:   {choice: {new: 70, returning: 25, vip: 5}}

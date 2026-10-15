@@ -32,7 +32,10 @@ from zoneinfo import ZoneInfo
 import yaml
 
 from .rng import derive, stable_int, uniform, weighted_choice
-from .values import SPEC_KEYS, ValueSpecError, validate_spec
+from .values import SPEC_KEYS, ValueSpecError, template_fields, validate_spec
+
+# The template fields a user property can use. See _validate_tracking.
+USER_PROPERTY_TEMPLATE_KEYS = frozenset({"user_pseudo_id"})
 
 PROPERTY_ENV_VAR = "GA4SYNTH_PROPERTY"
 MIXER_ENV_VAR = "GA4SYNTH_MIXER"
@@ -60,6 +63,16 @@ ECOMMERCE_EVENTS = frozenset({
 # has to be an unbroken run from the front.
 FUNNEL_CHAIN = ("view_item", "add_to_cart", "view_cart", "begin_checkout", "purchase")
 
+# The lead funnel, in order. Like FUNNEL_CHAIN, the enabled set has to be an
+# unbroken run from the front, because check_funnel_nesting holds it to the
+# same rule.
+LEAD_FUNNEL_CHAIN = ("form_start", "form_submit", "generate_lead")
+
+# Page types whose semantics live in code for the lead funnel. A contact page
+# carries the form; lead_confirmation is the page a submitted form lands on.
+# Neither needs ecommerce.
+LEAD_PAGES = frozenset({"contact", "lead_confirmation"})
+
 # Events GA4 always collects. They cannot be toggled.
 ALWAYS_ON_EVENTS = frozenset({
     "first_visit", "session_start", "page_view", "user_engagement",
@@ -71,6 +84,23 @@ REQUIRED_DWELL = (
     "page_load", "select_item", "view_item", "add_to_cart", "add_shipping_info",
     "add_payment_info", "scroll", "outbound_click", "custom_event",
 )
+
+# Seconds for the lead-funnel events, when dwell_seconds does not set them.
+# Only a journey that walks a contact page uses them.
+DEFAULT_LEAD_DWELL = {"form_start": (3, 20), "form_submit": (15, 120)}
+
+# Defaults for the property.yaml `leads` block.
+DEFAULT_LEADS = {
+    "form_id": "contact-form",
+    "form_name": "contact",
+    "form_submit_text": "Send",
+    "value": None,
+    "lead_source": None,
+}
+
+# Probability a form_start fires on a contact page the visitor leaves without
+# submitting, when journey.form_start_rate is not set.
+DEFAULT_FORM_START_RATE = 0.3
 
 # The page-walk edges that move a visitor towards a purchase. A conversion
 # factor is spread evenly across them (as its cube root), so a factor of 1.5
@@ -87,6 +117,37 @@ SESSION_TIMEOUT_SECONDS = 30 * 60
 # when session.extra_sessions.gap_minutes is not set.
 DEFAULT_EXTRA_SESSION_GAP_MINUTES = (120, 360)
 
+# What GA4 reports as default_channel_group for a channel that does not set
+# `channel_group`. A channel key not listed here reports "Unassigned".
+DEFAULT_CHANNEL_GROUPS = {
+    "organic_search": "Organic Search",
+    "direct": "Direct",
+    "paid_search": "Paid Search",
+    "paid_social": "Paid Social",
+    "organic_social": "Organic Social",
+    "email": "Email",
+    "referral": "Referral",
+}
+
+# The Google Ads account a `gclid` channel reports when it sets no `google_ads`.
+DEFAULT_GOOGLE_ADS = {"customer_id": "4477112200", "account_name": "{brand} | Search"}
+
+# Fixed values of the ecommerce block, used when property.yaml leaves them out.
+DEFAULT_ECOMMERCE = {
+    "transaction_id_prefix": "",
+    "shipping_tier": "Standard",
+    "payment_type": "Credit Card",
+    "view_item_list_name": "Product detail",
+}
+
+# Countries whose visitors report en-us when neither the geo nor
+# property.default_language names a language. Everyone else reports en-gb.
+LEGACY_EN_US_COUNTRIES = frozenset({"United States", "Canada", "United Kingdom", "Australia"})
+
+# Lines per offline order, with relative weights, when
+# server_side.offline_orders.line_item_weights is not set.
+DEFAULT_OFFLINE_LINE_ITEM_WEIGHTS = {1: 70, 2: 22, 3: 8}
+
 
 def _max_session_seconds(raw: dict[str, Any]) -> float:
     """An upper bound on the length of one browser session.
@@ -97,6 +158,12 @@ def _max_session_seconds(raw: dict[str, Any]) -> float:
     purpose: it only has to be safe, and no real session comes close to it.
     """
     dwell = raw["dwell_seconds"]
+    # The form events only fire on a contact page, so their dwell only counts
+    # when the journey walks one.
+    if "contact" in raw["journey"]["transitions"]:
+        dwell = {**DEFAULT_LEAD_DWELL, **dwell}
+    else:
+        dwell = {name: pair for name, pair in dwell.items() if name not in DEFAULT_LEAD_DWELL}
     custom_events = len(raw["tracking"].get("custom_events") or [])
     per_page = (
         float(raw["session"]["event_gap_seconds"][1])
@@ -116,6 +183,9 @@ class DayFactors:
     channels: dict[str, float]
     campaigns: dict[str, str]
     events: tuple[str, ...]
+    # Channel factors for returning visits: those of events not marked
+    # new_visitors_only. Equal to ``channels`` when no event is.
+    returning_channels: dict[str, float] = field(default_factory=dict)
 
 
 PROPERTY_SECTIONS = (
@@ -167,6 +237,44 @@ def default_config_paths() -> tuple[Path, Path]:
     return prop, mixer
 
 
+def scenarios_dir() -> Path:
+    """The directory holding the shipped scenarios, one sub-directory each.
+
+    Looked up the way default_config_paths looks up the config itself.
+
+    The only line of src/ga4synth/ the app changed in the sync of D-95: the
+    app keeps one folder per type of dataset directly in `config/` (D-23), so
+    there is no `config/scenarios/` here. See ORIGIN.md.
+    """
+    for base in (Path.cwd(), Path(__file__).resolve().parents[2]):
+        candidate = base / "config"
+        if candidate.is_dir():
+            return candidate
+    return Path.cwd() / "config"
+
+
+def available_scenarios() -> list[str]:
+    """Names of the scenarios that have both a property.yaml and a mixer.yaml."""
+    root = scenarios_dir()
+    if not root.is_dir():
+        return []
+    return sorted(
+        entry.name for entry in root.iterdir()
+        if (entry / "property.yaml").is_file() and (entry / "mixer.yaml").is_file()
+    )
+
+
+def scenario_paths(name: str) -> tuple[Path, Path]:
+    """property.yaml and mixer.yaml of a shipped scenario, such as ``lead-generation``."""
+    folder = scenarios_dir() / name
+    if not (folder / "property.yaml").is_file() or not (folder / "mixer.yaml").is_file():
+        raise FileNotFoundError(
+            f"no scenario named {name!r} in {scenarios_dir()}; "
+            f"available: {', '.join(available_scenarios()) or 'none'}"
+        )
+    return folder / "property.yaml", folder / "mixer.yaml"
+
+
 @dataclass(frozen=True)
 class World:
     """The simulated property. Immutable once loaded."""
@@ -201,6 +309,52 @@ class World:
     @property
     def master_seed(self) -> str:
         return self.raw["seed"]["master"]
+
+    @property
+    def brand(self) -> str:
+        return self.raw["property"]["brand"]
+
+    @property
+    def usd_exchange_rate(self) -> float:
+        """US dollars per unit of ``property.currency``, for the ``*_in_usd`` fields."""
+        rate = self.raw["property"].get("usd_exchange_rate")
+        return 1.0 if rate is None else float(rate)
+
+    def to_usd(self, amount: float | None) -> float | None:
+        """An amount in the property currency, converted for an ``*_in_usd`` field."""
+        rate = self.usd_exchange_rate
+        if amount is None or rate == 1.0:
+            return amount
+        return round(amount * rate + 1e-9, 2)
+
+    def language(self, geo: dict[str, Any]) -> str:
+        """device.language for a visitor from ``geo``.
+
+        The geo's own ``language`` wins, then ``property.default_language``.
+        Without either, English-speaking countries report en-us and every other
+        country en-gb, which is what the generator did before both existed.
+        """
+        if geo.get("language"):
+            return str(geo["language"])
+        default = self.raw["property"].get("default_language")
+        if default:
+            return str(default)
+        return "en-us" if geo["country"] in LEGACY_EN_US_COUNTRIES else "en-gb"
+
+    def channel_group(self, channel: str) -> str:
+        """default_channel_group reported for ``channel``."""
+        configured = self.raw["channels"][channel].get("channel_group")
+        return str(configured or DEFAULT_CHANNEL_GROUPS.get(channel, "Unassigned"))
+
+    def google_ads_account(self, channel: str) -> tuple[str, str]:
+        """``(customer_id, account_name)`` of the Google Ads account behind ``channel``."""
+        cfg = {**DEFAULT_GOOGLE_ADS, **(self.raw["channels"][channel].get("google_ads") or {})}
+        return str(cfg["customer_id"]), str(cfg["account_name"]).format(brand=self.brand)
+
+    def ecommerce_setting(self, key: str) -> Any:
+        """A fixed ecommerce value: transaction_id_prefix, shipping_tier, payment_type, view_item_list_name."""
+        ecommerce = self.raw["ecommerce"]
+        return ecommerce[key] if key in ecommerce else DEFAULT_ECOMMERCE[key]
 
     def section(self, name: str) -> Any:
         return self.raw[name]
@@ -243,10 +397,15 @@ class World:
         for name, factor in (self.raw.get("returning_channel_skew") or {}).items():
             if name in weights:
                 weights[name] = weights[name] * float(factor)
-        return self._apply_channels(weights, day) if day is not None else weights
+        if day is None:
+            return weights
+        return self._apply_channels(weights, day, self.day_factors(day).returning_channels)
 
-    def _apply_channels(self, weights: dict[str, float], day: dt.date) -> dict[str, float]:
-        factors = self.day_factors(day).channels
+    def _apply_channels(
+        self, weights: dict[str, float], day: dt.date, factors: dict[str, float] | None = None
+    ) -> dict[str, float]:
+        if factors is None:
+            factors = self.day_factors(day).channels
         if not factors:
             return weights
         return {name: weight * factors.get(name, 1.0) for name, weight in weights.items()}
@@ -389,6 +548,23 @@ class World:
         }
 
     @property
+    def channel_segment_weights(self) -> dict[str, dict[str, float]]:
+        """Intent segment weights for visitors first acquired through a channel.
+
+        A channel listed here replaces ``segments[].weight`` for its new
+        visitors; a segment it leaves out gets weight 0. Empty by default, so
+        intent then depends on nothing but the visitor.
+        """
+        cached = self._cache.get("channel_segment_weights")
+        if cached is None:
+            configured = (self.raw.get("intent") or {}).get("channel_segment_weights") or {}
+            cached = self._cache["channel_segment_weights"] = {
+                channel: {name: float(weights.get(name, 0.0)) for name in self.intent_segments}
+                for channel, weights in configured.items()
+            }
+        return cached
+
+    @property
     def max_return_factor(self) -> float:
         cached = self._cache.get("max_return_factor")
         if cached is None:
@@ -409,16 +585,39 @@ class World:
         """
         journey = self.raw["journey"]
         per_edge = conversion_factor ** (1.0 / len(FORWARD_EDGES))
+        per_lead_edge = self.lead_edge_factor(conversion_factor)
         forward = set(FORWARD_EDGES)
+
+        def factor(page: str, target: str) -> float:
+            if (page, target) in forward:
+                return per_edge
+            # The lead funnel has two steps: reaching the form, and sending it.
+            if target == "contact" or (page, target) == ("contact", "lead_confirmation"):
+                return per_lead_edge
+            return 1.0
+
         transitions = {
-            page: {
-                target: float(weight) * (per_edge if (page, target) in forward else 1.0)
-                for target, weight in targets.items()
-            }
+            page: {target: float(weight) * factor(page, target) for target, weight in targets.items()}
             for page, targets in journey["transitions"].items()
         }
         add_to_cart = min(1.0, float(journey["add_to_cart_rate"]) * per_edge)
         return transitions, add_to_cart
+
+    @staticmethod
+    def lead_edge_factor(conversion_factor: float) -> float:
+        """A conversion factor spread over the two steps of the lead funnel."""
+        return conversion_factor ** 0.5
+
+    def form_start_rate(self, conversion_factor: float) -> float:
+        """Probability a form_start fires on a contact page left without submitting."""
+        rate = float(self.raw["journey"].get("form_start_rate", DEFAULT_FORM_START_RATE))
+        return min(1.0, rate * self.lead_edge_factor(conversion_factor))
+
+    # -- leads -----------------------------------------------------------
+    def lead_setting(self, key: str) -> Any:
+        """A `leads` value: form_id, form_name, form_submit_text, value, lead_source."""
+        leads = self.raw.get("leads") or {}
+        return leads[key] if key in leads else DEFAULT_LEADS[key]
 
     # -- calendar --------------------------------------------------------
     def day_factors(self, day: dt.date) -> DayFactors:
@@ -430,6 +629,7 @@ class World:
         traffic = returns = 1.0
         conversion = self._demand(day)
         channels: dict[str, float] = {}
+        returning_channels: dict[str, float] = {}
         campaigns: dict[str, str] = {}
         active = []
         for event in self.raw.get("calendar") or []:
@@ -441,9 +641,15 @@ class World:
             conversion *= float(event.get("conversion", 1.0))
             for name, factor in (event.get("channels") or {}).items():
                 channels[name] = channels.get(name, 1.0) * float(factor)
+                # A launch that only brings in new visitors leaves returning
+                # visits on their usual channels.
+                if not event.get("new_visitors_only", False):
+                    returning_channels[name] = returning_channels.get(name, 1.0) * float(factor)
             campaigns.update(event.get("campaigns") or {})
 
-        factors = DayFactors(traffic, returns, conversion, channels, campaigns, tuple(active))
+        factors = DayFactors(
+            traffic, returns, conversion, channels, campaigns, tuple(active), returning_channels
+        )
         self._day_cache[day] = factors
         return factors
 
@@ -478,6 +684,30 @@ class World:
     def server_side(self) -> dict[str, Any]:
         return self.raw.get("server_side") or {}
 
+    # -- consent ---------------------------------------------------------
+    @property
+    def consent_enabled(self) -> bool:
+        """Whether consent mode applies. Off, every visitor grants both storages."""
+        return bool(self.raw["consent"].get("enabled", True))
+
+    @property
+    def offline_orders_enabled(self) -> bool:
+        """Whether customers place offline orders at all.
+
+        ``enabled: false`` switches them off whatever the rate. A missing block
+        or a zero ``daily_rate`` also means none.
+        """
+        cfg = self.server_side.get("offline_orders") or {}
+        return bool(cfg.get("enabled", True)) and float(cfg.get("daily_rate", 0.0)) > 0.0
+
+    @property
+    def offline_line_item_weights(self) -> tuple[list[int], list[float]]:
+        """Lines per offline order and their relative weights, in ascending order."""
+        cfg = self.server_side.get("offline_orders") or {}
+        weights = cfg.get("line_item_weights") or DEFAULT_OFFLINE_LINE_ITEM_WEIGHTS
+        lines = sorted(int(n) for n in weights)
+        return lines, [float(weights[n]) for n in lines]
+
     # -- identity --------------------------------------------------------
     @property
     def user_id_share(self) -> float:
@@ -493,6 +723,25 @@ class World:
     def cross_device_max_lag_days(self) -> int:
         """How far back a second device may reach to find the person it belongs to."""
         return int(self.raw["identity"].get("cross_device_max_lag_days", 30))
+
+    @property
+    def cross_device_device_weights(self) -> dict[str, float]:
+        """Device mix for second devices, in configured device order; empty when unset."""
+        mix = self.raw["identity"].get("cross_device_device_mix") or {}
+        return {name: float(mix.get(name, 0.0)) for name in self.raw["devices"]} if mix else {}
+
+    @property
+    def device_channel_skew(self) -> dict[str, dict[str, float]]:
+        """Channel factors for a new visitor's first channel, by device category."""
+        return {
+            device: {channel: float(f) for channel, f in factors.items()}
+            for device, factors in ((self.raw.get("acquisition") or {}).get("device_channel_skew") or {}).items()
+        }
+
+    def device_conversion_factor(self, category: str) -> float:
+        """Conversion factor for a device category; 1 when unset."""
+        factors = (self.raw.get("intent") or {}).get("device_conversion_factor") or {}
+        return float(factors.get(category, 1.0))
 
     # -- sessions --------------------------------------------------------
     @property
@@ -557,7 +806,8 @@ class World:
     # -- timing ----------------------------------------------------------
     def dwell(self, name: str) -> tuple[float, float]:
         """Seconds between an event and the one before it, as (low, high)."""
-        low, high = self.raw["dwell_seconds"][name]
+        dwell = self.raw["dwell_seconds"]
+        low, high = dwell[name] if name in dwell else DEFAULT_LEAD_DWELL[name]
         return float(low), float(high)
 
     @property
@@ -694,6 +944,8 @@ def _validate_dynamics(raw: dict[str, Any]) -> None:
     if curve is not None:
         if not curve:
             raise ValueError("retention.return_curve must not be empty")
+        if "decay_days" in raw["retention"]:
+            raise ValueError("retention sets both return_curve and decay_days; keep one")
         for index, term in enumerate(curve):
             if float(term.get("weight", 0)) <= 0 or float(term.get("decay_days", 0)) <= 0:
                 raise ValueError(f"retention.return_curve[{index}] needs positive weight and decay_days")
@@ -705,6 +957,19 @@ def _validate_dynamics(raw: dict[str, Any]) -> None:
         for key in ("weight", "return_factor", "conversion_factor"):
             if float(cfg.get(key, 1.0)) <= 0:
                 raise ValueError(f"intent.segments.{name}.{key} must be positive")
+    by_channel = intent.get("channel_segment_weights") or {}
+    unknown = sorted(set(by_channel) - set(raw["channels"]))
+    if unknown:
+        raise ValueError(f"intent.channel_segment_weights names channels not in property.yaml: {unknown}")
+    segment_names = set(intent.get("segments") or {"default": None})
+    for channel, weights in by_channel.items():
+        where = f"intent.channel_segment_weights.{channel}"
+        unknown = sorted(set(weights or {}) - segment_names)
+        if unknown:
+            raise ValueError(f"{where} names segments not in intent.segments: {unknown}")
+        values = [float(w) for w in (weights or {}).values()]
+        if any(w < 0 for w in values) or sum(values) <= 0:
+            raise ValueError(f"{where} needs non-negative weights with a positive sum")
     factors = intent.get("session_number_conversion_factor")
     if factors is not None and (not factors or any(float(f) <= 0 for f in factors)):
         raise ValueError("intent.session_number_conversion_factor must be a non-empty list of positive numbers")
@@ -730,6 +995,8 @@ def _validate_dynamics(raw: dict[str, Any]) -> None:
         for key in ("traffic", "returns", "conversion"):
             if float(event.get(key, 1.0)) <= 0:
                 raise ValueError(f"{where}.{key} must be positive")
+        if not isinstance(event.get("new_visitors_only", False), bool):
+            raise ValueError(f"{where}.new_visitors_only must be true or false")
         for key in ("channels", "campaigns"):
             unknown = sorted(set(event.get(key) or {}) - channels)
             if unknown:
@@ -743,6 +1010,8 @@ def _validate_dynamics(raw: dict[str, Any]) -> None:
     if delay is not None and (len(delay) != 2 or float(delay[0]) > float(delay[1]) or float(delay[0]) < 0):
         raise ValueError("server_side.confirmation_delay_seconds must be [min, max] with 0 <= min <= max")
     offline = server.get("offline_orders") or {}
+    if not isinstance(offline.get("enabled", True), bool):
+        raise ValueError("server_side.offline_orders.enabled must be true or false")
     if offline and (float(offline.get("daily_rate", 0)) < 0 or float(offline.get("decay_days", 1)) <= 0):
         raise ValueError("server_side.offline_orders needs daily_rate >= 0 and decay_days > 0")
     if not 0.0 <= float(offline.get("session_id_share", 0.0)) <= 1.0:
@@ -832,6 +1101,8 @@ def _validate(raw: dict[str, Any], property_name: str, mixer_name: str) -> None:
     rate = float(raw["session"].get("missing_session_start_rate", 0.0))
     if not 0.0 <= rate <= 1.0:
         raise ValueError(f"session.missing_session_start_rate must be between 0 and 1, got {rate}")
+    if not isinstance(raw["consent"].get("enabled", True), bool):
+        raise ValueError("consent.enabled must be true or false")
     for key in ("analytics_granted", "ads_granted"):
         share = float(raw["consent"][key])
         if not 0.0 <= share <= 1.0:
@@ -841,6 +1112,161 @@ def _validate(raw: dict[str, Any], property_name: str, mixer_name: str) -> None:
     _validate_events(raw)
     _validate_tracking(raw)
     _validate_extra_sessions(raw)
+    _validate_device_and_intent_levers(raw)
+    _validate_fixed_values(raw)
+    _validate_leads(raw)
+
+
+def _validate_leads(raw: dict[str, Any]) -> None:
+    """The `leads` block: form attributes and the value of one lead."""
+    leads = raw.get("leads")
+    if leads is None:
+        return
+    if not isinstance(leads, dict):
+        raise ValueError("leads must be a mapping")
+    unknown = sorted(set(leads) - set(DEFAULT_LEADS))
+    if unknown:
+        raise ValueError(f"leads has unknown keys: {unknown}")
+    for key in ("form_id", "form_name", "form_submit_text"):
+        if key in leads and not isinstance(leads[key], str):
+            raise ValueError(f"leads.{key} must be a string")
+    allowed = {
+        "value": {"choice", "int_range", "float_range", "round", "present"},
+        "lead_source": {"choice", "present"},
+    }
+    for key, keys in allowed.items():
+        spec = leads.get(key)
+        if isinstance(spec, dict) and set(spec) - keys:
+            raise ValueError(f"leads.{key} may only use {sorted(keys)}")
+        if key == "value" and spec is not None and not isinstance(spec, dict):
+            if not isinstance(spec, (int, float)) or isinstance(spec, bool) or spec < 0:
+                raise ValueError("leads.value must be a non-negative number, a value spec, or null")
+        try:
+            validate_spec(spec, f"leads.{key}")
+        except ValueSpecError as error:
+            raise ValueError(str(error)) from error
+
+
+def _validate_fixed_values(raw: dict[str, Any]) -> None:
+    """Values the export carries verbatim: currency conversion, language, labels, ids."""
+    prop = raw["property"]
+    rate = prop.get("usd_exchange_rate")
+    if rate is not None and (not isinstance(rate, (int, float)) or isinstance(rate, bool) or rate <= 0):
+        raise ValueError(f"property.usd_exchange_rate must be a positive number, got {rate!r}")
+    if prop["currency"] == "USD" and rate is not None and float(rate) != 1.0:
+        raise ValueError("property.usd_exchange_rate must be 1.0 when property.currency is USD")
+    if prop["currency"] != "USD" and rate is None:
+        raise ValueError(
+            f"property.currency is {prop['currency']}, so property.usd_exchange_rate is required: "
+            "the *_in_usd fields hold the same amounts converted to US dollars"
+        )
+    for where, value in [("property.default_language", prop.get("default_language"))] + [
+        (f"geos.{name}.language", geo.get("language")) for name, geo in raw["geos"].items()
+    ]:
+        if value is not None and (not isinstance(value, str) or not value):
+            raise ValueError(f"{where} must be a language tag such as en-us, got {value!r}")
+
+    for channel, cfg in raw["channels"].items():
+        where = f"channels.{channel}"
+        group = cfg.get("channel_group")
+        if group is not None and (not isinstance(group, str) or not group):
+            raise ValueError(f"{where}.channel_group must be a non-empty string")
+        ads = cfg.get("google_ads")
+        if ads is None:
+            continue
+        if not cfg.get("gclid"):
+            raise ValueError(f"{where}.google_ads has no effect without `gclid: true`")
+        if not isinstance(ads, dict):
+            raise ValueError(f"{where}.google_ads must be a mapping with customer_id and account_name")
+        unknown = sorted(set(ads) - set(DEFAULT_GOOGLE_ADS))
+        if unknown:
+            raise ValueError(f"{where}.google_ads has unknown keys: {unknown}")
+        if "customer_id" in ads and not str(ads["customer_id"]).isdigit():
+            raise ValueError(f"{where}.google_ads.customer_id must be digits, as Google Ads writes it")
+        try:
+            str(ads.get("account_name", "")).format(brand="")
+        except (KeyError, IndexError, ValueError) as error:
+            raise ValueError(
+                f"{where}.google_ads.account_name may only use the {{brand}} field: {error}"
+            ) from error
+
+    ecommerce = raw["ecommerce"]
+    for key in ("transaction_id_prefix", "view_item_list_name"):
+        value = ecommerce.get(key, DEFAULT_ECOMMERCE[key])
+        if key == "view_item_list_name" and value is None:
+            continue
+        if not isinstance(value, str):
+            raise ValueError(f"ecommerce.{key} must be a string")
+    for key in ("shipping_tier", "payment_type"):
+        spec = ecommerce.get(key, DEFAULT_ECOMMERCE[key])
+        if isinstance(spec, dict) and set(spec) - {"choice", "present"}:
+            raise ValueError(f"ecommerce.{key} must be a literal or a {{choice: ...}}, optionally with `present`")
+        try:
+            validate_spec(spec, f"ecommerce.{key}")
+        except ValueSpecError as error:
+            raise ValueError(str(error)) from error
+
+    offline = (raw.get("server_side") or {}).get("offline_orders") or {}
+    weights = offline.get("line_item_weights")
+    if weights is not None:
+        where = "server_side.offline_orders.line_item_weights"
+        if not isinstance(weights, dict) or not weights:
+            raise ValueError(f"{where} must be a non-empty mapping of line count to weight")
+        for count, weight in weights.items():
+            if not isinstance(count, int) or isinstance(count, bool) or count < 1:
+                raise ValueError(f"{where} key {count!r} must be a whole number, 1 or greater")
+            if float(weight) < 0:
+                raise ValueError(f"{where}[{count}] must not be negative")
+        if sum(float(w) for w in weights.values()) <= 0:
+            raise ValueError(f"{where} must not all be zero")
+        cap = int(raw["cart"]["max_line_items"])
+        over = sorted(count for count, weight in weights.items() if count > cap and float(weight) > 0)
+        if over:
+            raise ValueError(
+                f"{where} draws {over} lines, more than cart.max_line_items ({cap}); "
+                "those orders would be cut down to the cap"
+            )
+
+
+def _validate_device_and_intent_levers(raw: dict[str, Any]) -> None:
+    """Device-dependent mixes and factors, and intent-dependent custom-event rates."""
+    devices = set(raw["devices"])
+    channels = set(raw["channels"])
+    segments = set((raw.get("intent") or {}).get("segments") or {"default": None})
+
+    mix = raw["identity"].get("cross_device_device_mix") or {}
+    unknown = sorted(set(mix) - devices)
+    if unknown:
+        raise ValueError(f"identity.cross_device_device_mix names devices not in property.yaml: {unknown}")
+    if mix and (any(float(w) < 0 for w in mix.values()) or sum(float(w) for w in mix.values()) <= 0):
+        raise ValueError("identity.cross_device_device_mix needs non-negative weights with a positive sum")
+
+    skew = (raw.get("acquisition") or {}).get("device_channel_skew") or {}
+    unknown = sorted(set(skew) - devices)
+    if unknown:
+        raise ValueError(f"acquisition.device_channel_skew names devices not in property.yaml: {unknown}")
+    for device, factors in skew.items():
+        unknown = sorted(set(factors or {}) - channels)
+        if unknown:
+            raise ValueError(f"acquisition.device_channel_skew.{device} names channels not in property.yaml: {unknown}")
+        if any(float(f) < 0 for f in (factors or {}).values()):
+            raise ValueError(f"acquisition.device_channel_skew.{device} factors must not be negative")
+
+    factors = (raw.get("intent") or {}).get("device_conversion_factor") or {}
+    unknown = sorted(set(factors) - devices)
+    if unknown:
+        raise ValueError(f"intent.device_conversion_factor names devices not in property.yaml: {unknown}")
+    if any(float(f) <= 0 for f in factors.values()):
+        raise ValueError("intent.device_conversion_factor values must be positive")
+
+    for index, custom in enumerate(raw["tracking"].get("custom_events") or []):
+        by_intent = custom.get("rate_by_intent") or {}
+        where = f"tracking.custom_events[{index}].rate_by_intent"
+        unknown = sorted(set(by_intent) - segments)
+        if unknown:
+            raise ValueError(f"{where} names segments not in intent.segments: {unknown}")
+        if any(float(f) < 0 for f in by_intent.values()):
+            raise ValueError(f"{where} factors must not be negative")
 
 
 def _validate_extra_sessions(raw: dict[str, Any]) -> None:
@@ -1004,10 +1430,47 @@ def _validate_journey(raw: dict[str, Any]) -> None:
             raise ValueError(
                 f"page type {page!r} is used in journey.transitions but absent from `pages`"
             )
-    for page, template in raw["pages"].items():
-        for key in ("path", "title"):
-            if key not in template:
-                raise ValueError(f"pages.{page} is missing {key!r}")
+    for page, entry in raw["pages"].items():
+        # A page type is one {path, title}, or a list of them for a page type
+        # with several URLs, such as articles. A list entry may add a weight.
+        variants = entry if isinstance(entry, list) else [entry]
+        if not variants:
+            raise ValueError(f"pages.{page} must not be an empty list")
+        for index, template in enumerate(variants):
+            where = f"pages.{page}" if not isinstance(entry, list) else f"pages.{page}[{index}]"
+            if not isinstance(template, dict):
+                raise ValueError(f"{where} must be a mapping with path and title")
+            for key in ("path", "title"):
+                if key not in template:
+                    raise ValueError(f"{where} is missing {key!r}")
+            unknown = sorted(set(template) - {"path", "title", "weight"})
+            if unknown:
+                raise ValueError(f"{where} has unknown keys: {unknown}")
+            if "weight" in template and not isinstance(entry, list):
+                raise ValueError(f"{where}.weight only applies to a list of page variants")
+            weight = template.get("weight", 1)
+            if not isinstance(weight, (int, float)) or isinstance(weight, bool) or weight <= 0:
+                raise ValueError(f"{where}.weight must be a positive number")
+
+    # A thank-you page reached without sending the form would carry a
+    # generate_lead with no form_submit before it.
+    if "lead_confirmation" in raw["journey"]["entry_weights"]:
+        raise ValueError("journey.entry_weights cannot include lead_confirmation: a lead needs a form first")
+    for page, targets in transitions.items():
+        if "lead_confirmation" in targets and page != "contact":
+            raise ValueError(
+                f"journey.transitions[{page}] leads to lead_confirmation; only contact can, "
+                "because the confirmation page is where a submitted form lands"
+            )
+    rate = raw["journey"].get("form_start_rate", DEFAULT_FORM_START_RATE)
+    if not isinstance(rate, (int, float)) or isinstance(rate, bool) or not 0.0 <= rate <= 1.0:
+        raise ValueError("journey.form_start_rate must be a probability between 0 and 1")
+    for name in DEFAULT_LEAD_DWELL:
+        pair = raw["dwell_seconds"].get(name)
+        if pair is None:
+            continue
+        if not isinstance(pair, (list, tuple)) or len(pair) != 2 or float(pair[0]) > float(pair[1]):
+            raise ValueError(f"dwell_seconds.{name} must be [min, max] seconds with min <= max")
 
     if not ecommerce:
         used = (set(transitions) | set(raw["journey"]["entry_weights"])) & ECOMMERCE_PAGES
@@ -1044,20 +1507,22 @@ def _validate_events(raw: dict[str, Any]) -> None:
                 "cannot be turned off"
             )
 
-    if not bool(raw["ecommerce"].get("enabled", True)):
-        return  # the funnel is off wholesale; per-event toggles do not apply
-
-    enabled = [step for step in FUNNEL_CHAIN if toggles.get(step, True)]
-    expected = list(FUNNEL_CHAIN[: len(enabled)])
-    if enabled != expected:
-        disabled = [step for step in FUNNEL_CHAIN if not toggles.get(step, True)]
-        raise ValueError(
-            "tracking.events: the ecommerce funnel must be enabled as an unbroken "
-            f"run from the front of {' -> '.join(FUNNEL_CHAIN)}. "
-            f"Currently disabled: {', '.join(disabled)}, which leaves "
-            f"{', '.join(enabled)} enabled with a gap. A session containing a step "
-            "without its earlier steps is what check_funnel_nesting rejects."
-        )
+    chains = [("lead", LEAD_FUNNEL_CHAIN)]
+    # With ecommerce off its funnel is off wholesale; per-event toggles do not apply.
+    if bool(raw["ecommerce"].get("enabled", True)):
+        chains.insert(0, ("ecommerce", FUNNEL_CHAIN))
+    for label, chain in chains:
+        enabled = [step for step in chain if toggles.get(step, True)]
+        expected = list(chain[: len(enabled)])
+        if enabled != expected:
+            disabled = [step for step in chain if not toggles.get(step, True)]
+            raise ValueError(
+                f"tracking.events: the {label} funnel must be enabled as an unbroken "
+                f"run from the front of {' -> '.join(chain)}. "
+                f"Currently disabled: {', '.join(disabled)}, which leaves "
+                f"{', '.join(enabled)} enabled with a gap. A session containing a step "
+                "without its earlier steps is what check_funnel_nesting rejects."
+            )
 
 
 # GA4 owns these parameter names. Configuration may not redefine them, because
@@ -1071,7 +1536,8 @@ RESERVED_PARAMS = frozenset({
     "unique_search_term", "link_url", "link_domain", "outbound", "currency",
     "value", "transaction_id", "tax", "shipping", "coupon", "shipping_tier",
     "payment_type", "item_list_id", "item_list_name", "source", "medium",
-    "campaign", "term", "content", "gclid",
+    "campaign", "term", "content", "gclid", "form_id", "form_name",
+    "form_destination", "form_submit_text", "lead_source",
 })
 
 # Event names GA4 defines. Configuration may add to these, never redefine them.
@@ -1080,6 +1546,7 @@ RESERVED_EVENTS = frozenset({
     "click", "view_search_results", "view_item_list", "select_item", "view_item",
     "add_to_cart", "view_cart", "begin_checkout", "add_shipping_info",
     "add_payment_info", "purchase", "refund", "remove_from_cart",
+    "form_start", "form_submit", "generate_lead",
 })
 
 
@@ -1137,7 +1604,17 @@ def _validate_tracking(raw: dict[str, Any]) -> None:
     if not isinstance(properties, dict):
         raise ValueError("tracking.user_properties must be a mapping")
     for name, spec in properties.items():
+        where = f"tracking.user_properties.{name}"
         try:
-            validate_spec(spec, f"tracking.user_properties.{name}")
+            validate_spec(spec, where)
         except ValueSpecError as error:
             raise ValueError(str(error)) from error
+        # A user property is resolved once per visitor, outside any event, so
+        # the only template field it has is the visitor's own id.
+        if isinstance(spec, dict) and "template" in spec:
+            fields = set(template_fields(spec["template"])) - USER_PROPERTY_TEMPLATE_KEYS
+            if fields:
+                raise ValueError(
+                    f"{where}: a user property template can only use "
+                    f"{sorted(USER_PROPERTY_TEMPLATE_KEYS)}, not {sorted(fields)}"
+                )

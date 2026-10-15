@@ -158,7 +158,11 @@ export const SUBTITLES = {
   // Decision D-90, in the place of "Guided asks you a few questions. …" of decision D-41.
   mode: "Guided walks you step by step. Automated decides for you. Pro shows every setting.",
   project: "Your dataset is created in the project you choose.",
-  type: "Default is a site without a shop. Ecommerce is a site with a shop.",
+  // Decisions D-96 and D-97: the type screen offers four types, and since D-97 all four are one
+  // invented business software website, GA4Dataform's own, seen from four angles. So the subtitle
+  // no longer sets two types against each other, and does not say that each type is its own website.
+  // The line under each name is in `TYPE_CHOICES` (lib/flow.ts).
+  type: "One software website, seen four ways.",
   // Decision D-90: one sentence, in the place of the three of decision D-82, text B.
   location: "Choose the Google Cloud location of your BigQuery dataset.",
   // Decision D-90: one sentence, in the place of the three of decision D-82, text C. It no

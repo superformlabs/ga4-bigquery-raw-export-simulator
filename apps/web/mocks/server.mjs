@@ -123,9 +123,14 @@
 // says the same before anything is created. Two installs of one project never
 // conflict: they have different names.
 //
-// Type of dataset (decision D-23, api.md v1.8): the install spec carries
-// `datasetType`, "default" or "ecommerce". The job remembers it, and status
-// reports it as `existingType`.
+// Type of dataset (decisions D-23, D-96 and D-97, api.md v2.3): the install
+// spec carries `datasetType`, one of "default", "ecommerce", "eu-consent" and
+// "lead-generation". The job remembers it, and status reports it as
+// `existingType`. A job that names no configuration reads as "ecommerce".
+// Every message that names a type names it by the name a visitor reads
+// ("Default", "Ecommerce", "EU consent", "Lead generation"), never by the
+// value; the one exception is the message of a malformed `datasetType`, which
+// names the values of the field.
 //
 // One type per dataset (api.md v1.11): a dataset the installer creates carries
 // the label `dataset-type`. A request of another type on a dataset that holds
@@ -222,7 +227,11 @@ for (let i = 1; i <= MANY_PROJECTS; i++) {
 
 // The regions the app offers. The same list as the backend's (api.md v1.8).
 const REGIONS = ["us-central1", "europe-west1", "europe-west3", "asia-northeast1", "australia-southeast1"];
-const DATASET_TYPES = ["default", "ecommerce"];
+const DATASET_TYPES = ["default", "ecommerce", "eu-consent", "lead-generation"];
+// The name a visitor reads, for every type (api.md v2.3). Messages use it, never the value.
+const TYPE_NAMES = { default: "Default", ecommerce: "Ecommerce", "eu-consent": "EU consent", "lead-generation": "Lead generation" };
+/** The name a visitor reads for a type, or the value itself for anything this mock does not know. */
+const typeName = (type) => TYPE_NAMES[type] ?? type;
 const LEFTOVER_DATASET = "analytics_774378863";
 const SECOND_DATASET = "analytics_770000002";
 const LOST_DATASET = "analytics_770000010";
@@ -707,7 +716,7 @@ function conflictsWithExistingJob(res, spec) {
 function jobTakenBy(job, spec) {
   if (job.datasetId !== spec.datasetId) return `it writes to dataset ${job.datasetId}, not ${spec.datasetId}`;
   if (job.datasetType === null) return "it does not run a configuration of this installer";
-  if (job.datasetType !== spec.datasetType) return `it makes data of type ${job.datasetType}, not ${spec.datasetType}`;
+  if (job.datasetType !== spec.datasetType) return `it makes data of type ${typeName(job.datasetType)}, not ${typeName(spec.datasetType)}`;
   const has = refreshOfJob(job);
   if (has !== spec.dailyRefresh) return has ? "it was installed with the daily refresh, not without" : "it was installed without the daily refresh, not with";
   return null;
@@ -787,7 +796,7 @@ function refusesType(res, spec, inst, { mayBeEmpty }) {
   if (state === "empty" && !mayBeEmpty) {
     fail(
       res, 400, "INVALID_ARGUMENT",
-      `Dataset ${spec.datasetId} in project ${spec.projectId} is not set to type ${spec.datasetType} yet.`,
+      `Dataset ${spec.datasetId} in project ${spec.projectId} is not set to type ${typeName(spec.datasetType)} yet.`,
       "Start the install again. It creates what is missing and keeps what exists.",
       { link: console_("bigquery", spec.projectId) }
     );
@@ -798,7 +807,7 @@ function refusesType(res, spec, inst, { mayBeEmpty }) {
 
 function otherType(spec, inst) {
   return {
-    message: `Dataset ${spec.datasetId} in project ${spec.projectId} holds data of type ${typeOfDataset(inst)}.`,
+    message: `Dataset ${spec.datasetId} in project ${spec.projectId} holds data of type ${typeName(typeOfDataset(inst))}.`,
     hint: "Start the install again to get another dataset name, or set another name in the Pro settings.",
     link: console_("bigquery", spec.projectId),
   };
@@ -1317,8 +1326,8 @@ function preflightChecks(spec, session, firstLook, config) {
     const ours = `Dataset ${datasetId} already exists in ${inst.location} and was created by this installer.`;
     out.dataset =
       typeState(spec, inst) === "ready"
-        ? { state: "pass", message: `${ours} It is of type ${spec.datasetType}.` }
-        : { state: "pass", message: `${ours} It holds no table yet and takes the type ${spec.datasetType}.` };
+        ? { state: "pass", message: `${ours} It is of type ${typeName(spec.datasetType)}.` }
+        : { state: "pass", message: `${ours} It holds no table yet and takes the type ${typeName(spec.datasetType)}.` };
   }
 
   const services = neededServices(spec.dailyRefresh);

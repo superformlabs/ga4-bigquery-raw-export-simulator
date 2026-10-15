@@ -29,11 +29,12 @@ RUN pip install --no-cache-dir '.[bigquery]'
 # and pointed at explicitly. Without this the CLI would look in the working
 # directory and fail.
 #
-# The app holds one folder per type of dataset (decision D-23), and the image
-# holds both: /app/config/default/ and /app/config/ecommerce/, each with
-# property.yaml and mixer.yaml. There is nothing at /app/config/property.yaml.
-# A job names its configuration with the generator's options --property and
-# --mixer.
+# The app holds one folder per type of dataset (decisions D-23, D-96 and
+# D-97), and the image holds all four: /app/config/default/,
+# /app/config/ecommerce/, /app/config/eu-consent/ and
+# /app/config/lead-generation/, each with property.yaml and mixer.yaml. There
+# is nothing at /app/config/property.yaml. A job names its configuration with
+# the generator's options --property and --mixer.
 COPY config/ ./config/
 
 # The two variables name the ecommerce pair, so a job that names no
@@ -46,7 +47,7 @@ ENV GA4SYNTH_PROPERTY=/app/config/ecommerce/property.yaml \
 # image that lacks the type they are asked for. The name of the label is
 # IMAGE_TYPES_LABEL in infra/lib/image.sh, which reads it back without
 # credentials.
-LABEL ga4fake.dataset-types="default,ecommerce"
+LABEL ga4fake.dataset-types="default,ecommerce,eu-consent,lead-generation"
 
 # Unbuffered output so Cloud Logging shows progress rather than one burst at
 # exit.

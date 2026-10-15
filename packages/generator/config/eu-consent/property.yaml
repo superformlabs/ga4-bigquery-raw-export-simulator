@@ -1,0 +1,249 @@
+# Scenario: EU and consent-heavy. What the property IS.
+#
+# GA4Dataform, the same business software website as config/ecommerce/, sold
+# to European visitors in euros (decision D-97). Three things set it apart
+# from the e-commerce scenario:
+#
+#   currency    EUR, so every *_in_usd field converts at usd_exchange_rate
+#   languages   each geo reports its own device.language
+#   consent     about half of visitors refuse analytics storage (mixer.yaml),
+#               so a large share of rows carry no identifiers at all
+#
+# Comments here cover what is distinctive about this scenario. Every setting is
+# documented in full in config/ecommerce/property.yaml.
+
+property:
+  stream_id: "7700000301"
+  hostname: "ga4dataform.com"
+  brand: "GA4Dataform"
+  currency: "EUR"
+  # Invented and fixed. A real export converts at the day's rate.
+  usd_exchange_rate: 1.1
+  timezone: "Europe/Berlin"
+  default_language: "en-gb"
+
+seed:
+  master: "scenario-eu-consent-v1"
+
+ecommerce:
+  enabled: true
+  # VAT, charged on top of the subtotal as in the other scenarios.
+  tax_rate: 0.2
+  # Nothing is posted: a plan is software. Both amounts are zero, so every
+  # order carries a shipping of 0.00.
+  shipping_flat: 0.0
+  free_shipping_threshold: 0.0
+  transaction_id_prefix: "GD-"
+  shipping_tier: "Digital delivery"
+  # How a European business pays for software. The consumer instalment and
+  # bank checkouts of a retail shop are gone: a company pays by card, through
+  # PayPal, by direct debit or by transfer.
+  payment_type: {choice: {"Credit Card": 50, PayPal: 25, "SEPA Direct Debit": 20, "Bank transfer": 5}}
+  view_item_list_name: "Plan detail"
+
+channels:
+  organic_search:
+    channel_group: "Organic Search"
+    source: google
+    medium: organic
+    campaign: null
+    term: null
+    content: null
+    referrer: "https://www.google.com/"
+    source_weight: 91
+    other_sources:
+      bing:   {weight: 5, medium: organic, referrer: "https://www.bing.com/"}
+      ecosia: {weight: 4, medium: organic, referrer: "https://www.ecosia.org/"}
+  direct:
+    channel_group: "Direct"
+    source: "(direct)"
+    medium: "(none)"
+    campaign: null
+    term: null
+    content: null
+    referrer: null
+  paid_search:
+    channel_group: "Paid Search"
+    source: google
+    medium: cpc
+    term: null
+    content: null
+    campaigns:
+      brand-eu:           {weight: 40, term: "ga4dataform", ad_group: "brand-exact"}
+      plans-pmax-eu:      {weight: 40, ad_group: "all-plans"}
+      nonbrand-export-eu: {weight: 20, term: "ga4 bigquery export", ad_group: "bigquery-export-phrase"}
+    gclid: true
+    google_ads:
+      customer_id: "6634091127"
+      account_name: "{brand} | EU Search"
+    referrer: "https://www.google.com/"
+  paid_social:
+    channel_group: "Paid Social"
+    source: linkedin
+    medium: paid_social
+    term: null
+    content: null
+    campaigns:
+      retargeting-trial:      {weight: 55, content: "single-image"}
+      prospecting-data-teams: {weight: 45, content: "video-30s"}
+    referrer: "https://www.linkedin.com/"
+    source_weight: 65
+    other_sources:
+      youtube: {weight: 35, medium: paid_social, referrer: "https://www.youtube.com/"}
+  organic_social:
+    channel_group: "Organic Social"
+    source: linkedin
+    medium: social
+    campaign: null
+    term: null
+    content: null
+    referrer: "https://www.linkedin.com/"
+    source_weight: 55
+    other_sources:
+      youtube: {weight: 35, medium: social, referrer: "https://www.youtube.com/"}
+      reddit:  {weight: 10, medium: social, referrer: "https://www.reddit.com/"}
+  email:
+    channel_group: "Email"
+    source: newsletter
+    medium: email
+    term: null
+    content: null
+    campaigns:
+      product-update: 60
+      abandoned-cart: 25
+      plan-renewal:   15
+    referrer: null
+  referral:
+    channel_group: "Referral"
+    source: "analyticsreview.example"
+    medium: referral
+    campaign: null
+    term: null
+    content: null
+    referrer: "https://analyticsreview.example/reviews/"
+    source_weight: 60
+    other_sources:
+      "datastackweekly.example": {weight: 40, medium: referral, referrer: "https://datastackweekly.example/ga4-models/"}
+
+devices:
+  desktop:
+    os: ["Windows", "Macintosh"]
+    browser: ["Chrome", "Safari", "Edge", "Firefox"]
+    brand: []
+  mobile:
+    os: ["iOS", "Android"]
+    browser: ["Chrome", "Safari", "Samsung Internet"]
+    brand: ["Apple", "Samsung", "Google", "Xiaomi"]
+  tablet:
+    os: ["iOS", "Android"]
+    browser: ["Chrome", "Safari"]
+    brand: ["Apple", "Samsung"]
+
+# The same strings as config/ecommerce/property.yaml, which took them from a
+# real export.
+# Each geo adds the language its visitors' browsers report.
+geos:
+  de_berlin: {country: "Germany", region: "Berlin", city: "Berlin", metro: "(not set)", continent: "Europe", sub_continent: "Western Europe", language: "de-de"}
+  fr_paris: {country: "France", region: "Ile-de-France", city: "Paris", metro: "(not set)", continent: "Europe", sub_continent: "Western Europe", language: "fr-fr"}
+  nl_amsterdam: {country: "Netherlands", region: "North Holland", city: "Amsterdam", metro: "(not set)", continent: "Europe", sub_continent: "Western Europe", language: "nl-nl"}
+  es_madrid: {country: "Spain", region: "Community of Madrid", city: "Madrid", metro: "(not set)", continent: "Europe", sub_continent: "Southern Europe", language: "es-es"}
+  it_milan: {country: "Italy", region: "Lombardy", city: "Milan", metro: "(not set)", continent: "Europe", sub_continent: "Southern Europe", language: "it-it"}
+  se_stockholm: {country: "Sweden", region: "Stockholm County", city: "Stockholm", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe", language: "sv-se"}
+  dk_copenhagen: {country: "Denmark", region: "Capital Region of Denmark", city: "Copenhagen", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe", language: "da-dk"}
+  at_vienna: {country: "Austria", region: "Vienna", city: "Vienna", metro: "(not set)", continent: "Europe", sub_continent: "Western Europe", language: "de-at"}
+  ch_zurich: {country: "Switzerland", region: "Zurich", city: "Zurich", metro: "(not set)", continent: "Europe", sub_continent: "Western Europe", language: "de-ch"}
+  pl_warsaw: {country: "Poland", region: "Masovian Voivodeship", city: "Warsaw", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe", language: "pl-pl"}
+  cz_prague: {country: "Czechia", region: "Prague", city: "Prague", metro: "(not set)", continent: "Europe", sub_continent: "Eastern Europe", language: "cs-cz"}
+  pt_lisbon: {country: "Portugal", region: "Lisbon", city: "Lisbon", metro: "(not set)", continent: "Europe", sub_continent: "Southern Europe", language: "pt-pt"}
+  fi_helsinki: {country: "Finland", region: "Uusimaa", city: "Helsinki", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe", language: "fi-fi"}
+  no_oslo_municipality: {country: "Norway", region: "Oslo", city: "Oslo Municipality", metro: "(not set)", continent: "Europe", sub_continent: "Northern Europe", language: "nb-no"}
+  uk_london: {country: "United Kingdom", region: "England", city: "London", metro: "London", continent: "Europe", sub_continent: "Northern Europe", language: "en-gb"}
+
+# The same plans and add-ons as config/ecommerce/, with European prices in
+# euros. VAT is added on top at checkout, as `ecommerce.tax_rate` says.
+catalogue:
+  - {item_id: "GD-PLAN-01", item_name: "Starter plan", category: "Subscriptions", price: 45.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-PLAN-02", item_name: "Pro plan", category: "Subscriptions", price: 139.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-PLAN-03", item_name: "Business plan", category: "Subscriptions", price: 369.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-PLAN-04", item_name: "Enterprise plan", category: "Subscriptions", price: 899.00, variants: ["Annual"]}
+  - {item_id: "GD-ADD-01", item_name: "Attribution add-on", category: "Add-ons", price: 69.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-ADD-02", item_name: "Consent mode add-on", category: "Add-ons", price: 35.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-ADD-03", item_name: "Five extra seats", category: "Add-ons", price: 22.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-SUP-01", item_name: "Priority support", category: "Support", price: 89.00, variants: ["Monthly", "Annual"]}
+  - {item_id: "GD-SRV-01", item_name: "Onboarding workshop", category: "Services", price: 420.00, variants: ["Remote", "On site"]}
+  - {item_id: "GD-SRV-02", item_name: "Tracking audit", category: "Services", price: 690.00, variants: ["Remote", "On site"]}
+
+search_terms: ["pricing", "bigquery export", "attribution", "sessions model", "consent mode", "api", "dataform"]
+
+outbound_links:
+  - "https://analyticsreview.example/reviews/ga4dataform"
+  - "https://www.linkedin.com/company/ga4dataform"
+
+# The same addresses as config/ecommerce/: it is the same website, seen by
+# European visitors.
+pages:
+  home:
+    path: "/"
+    title: "{brand} | GA4 reporting models for BigQuery"
+  features:
+    - {path: "/features/data-models", title: "Data models | {brand}", weight: 40}
+    - {path: "/features/attribution", title: "Attribution | {brand}", weight: 35}
+    - {path: "/features/dashboards", title: "Dashboards | {brand}", weight: 25}
+  pricing:
+    path: "/pricing"
+    title: "Pricing | {brand}"
+  docs:
+    - {path: "/docs/quickstart", title: "Quickstart | {brand}", weight: 40}
+    - {path: "/docs/bigquery-export", title: "The BigQuery export | {brand}", weight: 25}
+    - {path: "/docs/sql-models", title: "SQL models | {brand}", weight: 20}
+    - {path: "/docs/api", title: "API reference | {brand}", weight: 15}
+  plp:
+    path: "/plans/{category_slug}"
+    title: "{category} | {brand}"
+  pdp:
+    path: "/product/{item_slug}"
+    title: "{item_name} | {brand}"
+  search:
+    path: "/search?q={search_query}"
+    title: "Search results | {brand}"
+  blog:
+    - {path: "/blog/sessions-in-bigquery", title: "Sessions in BigQuery | {brand}", weight: 35}
+    - {path: "/blog/consent-mode-and-modelling", title: "Consent mode and modelling | {brand}", weight: 25}
+    - {path: "/blog/attribution-without-guesswork", title: "Attribution without guesswork | {brand}", weight: 25}
+    - {path: "/blog/what-a-query-costs", title: "What a query costs | {brand}", weight: 15}
+  login:
+    - {path: "/login", title: "Log in | {brand}", weight: 70}
+    - {path: "/signup", title: "Create your account | {brand}", weight: 30}
+  cart:
+    path: "/cart"
+    title: "Your cart | {brand}"
+  checkout:
+    path: "/checkout"
+    title: "Checkout | {brand}"
+  purchased:
+    path: "/checkout/thank-you"
+    title: "Order confirmed | {brand}"
+
+tracking:
+  events:
+    scroll: true
+    click: true
+    view_search_results: true
+    view_item_list: true
+    select_item: true
+    view_item: true
+    add_to_cart: true
+    view_cart: true
+    begin_checkout: true
+    add_shipping_info: true
+    add_payment_info: true
+    purchase: true
+  global_params: {}
+  params_by_event: {}
+  custom_events:
+    - name: newsletter_signup
+      on_page: [home, blog]
+      rate: 0.03
+      rate_by_intent: {browsing: 0.3, considering: 2.5, ready: 1.5}
+      params: {}
+  user_properties: {}

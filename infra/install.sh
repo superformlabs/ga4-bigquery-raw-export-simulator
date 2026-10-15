@@ -44,12 +44,14 @@
 # changed. A real GA4 export holds tables named events_YYYYMMDD too, and the
 # daily job would overwrite them.
 #
-# Type of dataset (api.md v1.8, decision D-23): DATASET_TYPE is `default` (a
-# site without a shop) or `ecommerce`. The image holds one configuration per
-# type, and the job names its own in its arguments. The type is part of an
-# install: when the job exists and produces another type, or writes to
-# another dataset, the script stops before it changes anything, with exit
-# code 5. Only the region of this run is read (every region: task DEP-8).
+# Type of dataset (api.md v2.3, decisions D-23, D-96 and D-97): DATASET_TYPE
+# is `default`, `ecommerce`, `eu-consent` or `lead-generation`: one invented
+# business software website, GA4Dataform's own, from four angles. The image
+# holds one configuration per type, and the job names its own in its
+# arguments. The type is part of an install: when the job exists and produces
+# another type, or writes to another dataset, the script stops before it
+# changes anything, with exit code 5. Only the region of this run is read
+# (every region: task DEP-8).
 #
 # Contracts: docs/contracts/api.md (steps, defaults, dataset ownership) and
 # docs/contracts/generator-cli.md (container, args, timeouts, permissions).
@@ -65,7 +67,7 @@ HERE="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
 . "${HERE}/lib/env.sh"
 
 DATASET="${DATASET:-analytics_770000001}"   # api.md InstallSpec default
-DATASET_TYPE="${DATASET_TYPE:-default}"     # default or ecommerce; api.md InstallSpec default
+DATASET_TYPE="${DATASET_TYPE:-default}"     # one of DATASET_TYPES below; api.md InstallSpec default
 HISTORY_DAYS="${HISTORY_DAYS:-90}"          # days backfilled on first install, 1 or more; api.md InstallSpec default
 SCHEDULE="${SCHEDULE:-0 6 * * *}"           # cron, UTC
 JOB="${JOB:-ga4synth-daily}"                # Cloud Run Job and Scheduler job name
@@ -120,13 +122,22 @@ if [[ -n "${HISTORY_REFUSAL}" ]]; then
   exit 2
 fi
 
-case "${DATASET_TYPE}" in
-  default|ecommerce) ;;
-  *)
-    echo "DATASET_TYPE must be default or ecommerce, got '${DATASET_TYPE}'" >&2
-    exit 2
-    ;;
-esac
+# The types of dataset, one configuration folder each, as in
+# docs/contracts/api.md (`datasetType`) and infra/build.sh (CONFIG_TYPES).
+# Named once here: the check below, the job's arguments and the reading of an
+# existing job all use this list.
+DATASET_TYPES=(default ecommerce eu-consent lead-generation)
+DATASET_TYPES_LIST="$(IFS=,; printf '%s' "${DATASET_TYPES[*]}")"
+
+_known_type=0
+for _type in "${DATASET_TYPES[@]}"; do
+  if [[ "${DATASET_TYPE}" == "${_type}" ]]; then _known_type=1; fi
+done
+if (( _known_type == 0 )); then
+  echo "DATASET_TYPE must be one of: ${DATASET_TYPES_LIST//,/, }, got '${DATASET_TYPE}'" >&2
+  exit 2
+fi
+unset _known_type _type
 
 # Where the image holds the configuration of each type (generator-cli.md,
 # "Container contract").
@@ -180,7 +191,8 @@ pin_gcloud "${PROJECT}"
 # The job and the schedule have fixed names, so a project holds one install
 # (decision D-12). A job that writes to another dataset is not re-pointed:
 # that would silently stop the refresh of the first dataset. A job of another
-# type is not re-pointed either, or one dataset would hold days of two types.
+# type is not re-pointed either, or one dataset would hold days of two of the
+# four types.
 # Same rules and same words as the backend (`assertSameInstall`). Run before
 # the first step, so a refusal leaves nothing behind.
 require_same_install() {
@@ -201,7 +213,7 @@ require_same_install() {
   python3 -c '
 import json, sys
 job = json.load(open(sys.argv[1]))
-project, dataset, wanted, config_dir, before = sys.argv[2:7]
+project, dataset, wanted, config_dir, before, types = sys.argv[2:8]
 containers = job["spec"]["template"]["spec"]["template"]["spec"]["containers"]
 args = containers[0].get("args") or []
 
@@ -225,7 +237,7 @@ if "--property" not in args and "--mixer" not in args:
     existing = before
 else:
     existing = None
-    for kind in ("default", "ecommerce"):
+    for kind in types.split(","):
         pair = ("%s/%s/property.yaml" % (config_dir, kind), "%s/%s/mixer.yaml" % (config_dir, kind))
         if (value("--property"), value("--mixer")) == pair:
             existing = kind
@@ -233,6 +245,7 @@ if existing and existing != wanted:
     print(existing)
     sys.exit(11)
 ' "${answer}" "${PROJECT}" "${DATASET}" "${DATASET_TYPE}" "${CONFIG_DIR}" "${TYPE_BEFORE_V1_8}" \
+    "${DATASET_TYPES_LIST}" \
     >"${problem}" || verdict=$?
   local existing
   existing="$(cat "${problem}")"
@@ -260,7 +273,8 @@ if existing and existing != wanted:
 # --- The image holds the type ----------------------------------------------
 # A job that names a configuration the image does not hold stops at start,
 # every morning. build.sh writes the types an image holds on the image; an
-# image built before the types existed holds none of the two folders. Read
+# image built before the types existed holds none of the four folders, and an
+# image built before D-96 holds the first two only. Read
 # without credentials, as the target project will pull it.
 require_image_with_type() {
   if ! image_read "${IMAGE}"; then

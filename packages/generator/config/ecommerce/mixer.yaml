@@ -1,4 +1,12 @@
-# How much, and how often.
+# Scenario: E-commerce. How much, and how often.
+#
+# A business software website that sells its plans and add-ons online, with
+# the full GA4 ecommerce funnel, paid and organic acquisition, sign-in,
+# cross-device visitors, consent mode and server-side purchases.
+#
+# Run it with:
+#
+#   ga4synth summary --scenario ecommerce --date 2026-09-01
 #
 # Every quantitative dial lives here. Nothing in this file says what the site
 # is; that is property.yaml. Tuning the dataset means editing this file and
@@ -12,7 +20,7 @@
 #
 # Tune by generating a day and looking at it:
 #
-#   ga4synth summary --date 2026-09-01
+#   ga4synth summary --scenario ecommerce --date 2026-09-01
 
 # ---------------------------------------------------------------------------
 # Volume
@@ -32,7 +40,8 @@ volume:
     5: 0.94
     6: 0.72
     7: 0.78
-  # Gentle annual seasonality, peaking in late November (retail).
+  # Gentle annual seasonality, peaking in late November, when Black Friday
+  # and the end of the budget year fall together.
   seasonality:
     amplitude: 0.28
     peak_day_of_year: 330
@@ -56,11 +65,13 @@ retention:
   # come back within days to finish what they started, and a long tail of
   # occasional visitors. A single slow decay spreads returns almost evenly over
   # weeks, which flattens the conversion-lag curve after day 0.
-  # (A single `decay_days: 30` in place of return_curve is still accepted.)
-  return_base: 0.046
+  # A single `decay_days: 30` in place of return_curve is still accepted. It is
+  # an alternative, not an addition: with return_curve set it is ignored, so it
+  # is not set here.
+  return_base: 0.07
   return_curve:
-    - {weight: 0.6, decay_days: 2.5}
-    - {weight: 0.4, decay_days: 30}
+    - {weight: 0.45, decay_days: 3}
+    - {weight: 0.55, decay_days: 35}
 
 # ---------------------------------------------------------------------------
 # Intent
@@ -68,7 +79,7 @@ retention:
 # A latent purchase intent, drawn once per visitor. It is what ties coming back
 # to buying: the segment that returns soonest is also the one whose visits
 # convert, so returning sessions convert better than first ones, as in a real
-# store. Generation stays stateless because the trait belongs to the identity;
+# business. Generation stays stateless because the trait belongs to the identity;
 # no visitor has to remember an earlier day.
 #
 # return_factor multiplies the return probability. conversion_factor multiplies
@@ -80,7 +91,20 @@ intent:
     ready:       {weight: 6,  return_factor: 1.0,  conversion_factor: 2.6}
   # Conversion factor by visit number: first visit, second, third and later.
   # First visits convert least; people buy once they have looked around.
-  session_number_conversion_factor: [0.65, 1.25, 1.45]
+  session_number_conversion_factor: [0.35, 0.9, 1.6]
+  # Segment weights by the channel that first brought the visitor, replacing
+  # segments[].weight for that channel's new visitors.
+  # Social brings in people who come back and buy later through other
+  # channels, so its visitors are mostly `considering` (they return most).
+  channel_segment_weights:
+    paid_social:    {browsing: 25, considering: 72, ready: 3}
+    organic_social: {browsing: 30, considering: 67, ready: 3}
+    referral:       {browsing: 60, considering: 34, ready: 6}
+    paid_search:    {browsing: 50, considering: 35, ready: 15}
+    email:          {browsing: 35, considering: 40, ready: 25}
+  # Conversion factor by device category.
+  # People buy on a computer more than on a phone.
+  device_conversion_factor: {desktop: 1.4, mobile: 0.7}
 
 # ---------------------------------------------------------------------------
 # Demand
@@ -114,7 +138,9 @@ demand:
 #   returns     return probability
 #   conversion  conversion factor
 #   channels    channel weights for sessions that day
-# and campaigns adds a campaign to a channel while it runs. The channel's own
+# and campaigns adds a campaign to a channel while it runs.
+# `new_visitors_only: true` limits the event's channel weights to new visitors;
+# returning visits keep their usual channels. Off by default. The channel's own
 # campaigns in property.yaml stay on beside it, at the share left over by
 # `acquisition.calendar_campaign_share`.
 #
@@ -122,37 +148,57 @@ demand:
 # every year and may wrap past the new year; as YYYY-MM-DD they happen once.
 # Where events overlap, factors multiply and the later campaign name wins, so
 # put seasonal campaign names before the sales that replace them.
+# The year of a software company: one prospecting campaign a quarter, a
+# weekly product update by email, two product launches, a conference, the
+# push at the end of a quarter and the Black Friday offer on the plans.
 calendar:
-  - {name: spring-prospecting, from: "03-01", to: "05-31", campaigns: {paid_social: spring-prospecting}}
-  - {name: summer-prospecting, from: "06-01", to: "08-31", campaigns: {paid_social: summer-prospecting}}
-  - {name: fall-prospecting,   from: "09-01", to: "11-20", campaigns: {paid_social: fall-prospecting}}
-  - {name: winter-prospecting, from: "11-21", to: "02-28", campaigns: {paid_social: holiday-prospecting}}
-  # The weekly newsletter goes out on Tuesday, with a smaller echo on Wednesday.
-  - {name: weekly-digest,      weekday: 2, channels: {email: 3.5}, returns: 1.25, conversion: 1.03}
-  - {name: weekly-digest-echo, weekday: 3, channels: {email: 1.6}, returns: 1.08}
-  - name: summer-sale
-    from: "07-09"
-    to: "07-13"
+  - {name: q1-prospecting, from: "01-01", to: "03-31", campaigns: {paid_social: q1-prospecting}}
+  - {name: q2-prospecting, from: "04-01", to: "06-30", campaigns: {paid_social: q2-prospecting}}
+  - {name: q3-prospecting, from: "07-01", to: "09-30", campaigns: {paid_social: q3-prospecting}}
+  - {name: q4-prospecting, from: "10-01", to: "12-31", campaigns: {paid_social: q4-prospecting}}
+  # The weekly product update goes out on Tuesday, with a smaller echo on
+  # Wednesday.
+  - {name: product-update,      weekday: 2, channels: {email: 3.5}, new_visitors_only: false, returns: 1.25, conversion: 1.03}
+  - {name: product-update-echo, weekday: 3, channels: {email: 1.6}, new_visitors_only: false, returns: 1.08}
+  # The spring release, in the week of the product launch.
+  - name: spring-release
+    from: "03-10"
+    to: "03-16"
     traffic: 1.2
     returns: 1.35
-    conversion: 1.4
-    channels: {paid_social: 2.2, email: 2.0, paid_search: 1.4}
-    campaigns: {paid_social: summer-sale, email: summer-sale, paid_search: summer-sale}
-  - name: back-to-school
+    conversion: 1.3
+    channels: {paid_social: 2.0, email: 2.0, paid_search: 1.4}
+    new_visitors_only: false
+    campaigns: {paid_social: spring-release, email: spring-release, paid_search: spring-release}
+  # A measurement conference: the company has a stand and a talk.
+  - name: measure-summit
     from: "08-17"
     to: "08-23"
     traffic: 1.1
     conversion: 1.15
     channels: {paid_search: 1.5, paid_social: 1.6}
-    campaigns: {paid_social: back-to-school, paid_search: back-to-school}
-  - name: labor-day-sale
-    from: "09-03"
-    to: "09-07"
+    new_visitors_only: false
+    campaigns: {paid_social: measure-summit, paid_search: measure-summit}
+  # The summer release.
+  - name: summer-release
+    from: "08-26"
+    to: "08-30"
+    traffic: 1.2
+    returns: 1.35
+    conversion: 1.4
+    channels: {paid_social: 2.2, email: 2.0, paid_search: 1.4}
+    new_visitors_only: false
+    campaigns: {paid_social: summer-release, email: summer-release, paid_search: summer-release}
+  # Sales push the annual plans out before the quarter closes.
+  - name: quarter-end-offer
+    from: "09-24"
+    to: "09-30"
     traffic: 1.15
     returns: 1.3
     conversion: 1.35
     channels: {email: 2.2, paid_social: 1.8}
-    campaigns: {email: labor-day-sale, paid_social: labor-day-sale}
+    new_visitors_only: false
+    campaigns: {email: quarter-end-offer, paid_social: quarter-end-offer}
   - name: black-friday
     from: "11-24"
     to: "12-01"
@@ -160,6 +206,7 @@ calendar:
     returns: 1.5
     conversion: 1.5
     channels: {email: 2.5, paid_social: 2.0, paid_search: 1.6}
+    new_visitors_only: false
     campaigns: {email: black-friday, paid_social: black-friday, paid_search: black-friday}
 
 # ---------------------------------------------------------------------------
@@ -171,8 +218,10 @@ acquisition:
   # fields of collected_traffic_source and the utm-style event_params stay
   # NULL unless the advertiser also adds UTM parameters to the ad URL. Last
   # click still names the campaign, because GA4 resolves the click id itself.
-  # At 0.0 every paid-search click carries UTM parameters as well.
-  gclid_only_share: 0.7
+  # At 0.0 every paid-search click carries UTM parameters as well. Not a
+  # measured value: at 0.7 most paid-search sessions showed campaign (not set)
+  # in GA4Dataform, which drowned the campaign views of the demo report.
+  gclid_only_share: 0.3
   # Share of a channel's acquisitions that a calendar campaign takes on its
   # days. The channel's always-on campaigns split the rest by their weights.
   # At 1.0 the calendar campaign replaces them while it runs.
@@ -184,6 +233,11 @@ acquisition:
   # collected, which for a direct arrival is nothing. At 0 a direct session
   # always reports (direct) / (none).
   last_non_direct_lookback_days: 30
+  # Channel factors for a new visitor's first channel, by device category;
+  # unset, every device draws from channel_mix.
+  # People find the site on their phone through social.
+  device_channel_skew:
+    mobile: {paid_social: 2.0, organic_social: 2.0}
 
 # ---------------------------------------------------------------------------
 # Server-side purchases
@@ -199,15 +253,25 @@ server_side:
   confirmation_delay_seconds: [20, 900]
   # Orders a signed-in customer places without visiting, such as phone or
   # account reorders. Probability per customer per day, decaying with time
-  # since their first visit.
+  # since their first visit. `enabled: false` switches them off entirely.
   offline_orders:
+    enabled: true
     daily_rate: 0.00025
     decay_days: 45
     # Share of offline orders whose Measurement Protocol integration sends a
     # session id. The order then carries ga_session_id and ga_session_number,
     # and forms a session of one event with no session_start. At 0.0 no
-    # offline order carries a session id.
-    session_id_share: 0.5
+    # offline order carries a session id: it stays a sessionless server-side
+    # purchase. Kept at 0.0 because a one-event session repeats the number of
+    # the visitor's latest session, and attribution credits it to Direct.
+    session_id_share: 0.0
+    # Relative weights for the number of distinct products in one offline
+    # order. No key may exceed cart.max_line_items; the config is rejected
+    # otherwise.
+    line_item_weights:
+      1: 70
+      2: 22
+      3: 8
 
 # ---------------------------------------------------------------------------
 # Sessions
@@ -260,6 +324,9 @@ session:
     gap_minutes: [120, 360]
 
 consent:
+  # `enabled: false` switches consent mode off: every visitor grants analytics
+  # and ads storage, whatever the shares below say.
+  enabled: true
   # Share of visitors who grant analytics storage. Consent belongs to the
   # visitor: whoever denies it denies it on every session. Their rows have no
   # user_pseudo_id, no user_id, no ga_session_id and no session attribution.
@@ -273,18 +340,21 @@ identity:
   # Share of *people* who sign in and so report a user_id. Decided per person,
   # not per session: a signed-in person reports the same user_id on every
   # session and on every device. Set to 0.0 for a property with no login.
-  user_id_share: 0.35
+  user_id_share: 0.55
   # Share of new visitors who are an existing person arriving on a second
   # device. They get their own user_pseudo_id, their own device and their own
   # sessions, and are tied to the first device only by a shared user_id, which
   # is exactly how cross-device behaviour appears in a real export. Needs
   # user_id_share above 0, because without a user_id the second device is
   # indistinguishable from a new visitor.
-  cross_device_share: 0.18
+  cross_device_share: 0.3
   # How far back a second device may reach to find the person it belongs to.
-  # Pair it with retention.decay_days so both devices are plausibly active at
-  # the same time.
-  cross_device_max_lag_days: 30
+  # Keep it within the fast term of retention.return_curve so both devices are
+  # plausibly active at the same time.
+  cross_device_max_lag_days: 14
+  # Device mix of second devices; unset, they use device_mix.
+  # Discovered on a phone, bought on a computer.
+  cross_device_device_mix: {desktop: 75, mobile: 20, tablet: 5}
 
 # ---------------------------------------------------------------------------
 # Mixes
@@ -372,9 +442,14 @@ geo_mix:
 # A returning visitor is not necessarily reacquired the way they arrived the
 # first time. These multiply the channel weights above for sessions after the
 # first. 1.0 means no skew; omit a channel to leave it unchanged.
+# Returning visitors come back through Direct, Email and branded search far
+# more than through social.
 returning_channel_skew:
-  direct: 2.2
-  email: 1.8
+  direct: 3.0
+  email: 2.5
+  paid_search: 1.4
+  paid_social: 0.4
+  organic_social: 0.5
 
 # ---------------------------------------------------------------------------
 # Journey
@@ -396,23 +471,32 @@ returning_channel_skew:
 # conversion rate where it was.
 journey:
   entry_weights:
-    home: 34
-    plp: 28
+    home: 20
+    plp: 22
     pdp: 24
-    search: 9
-    blog: 5
+    pricing: 9
+    features: 5
+    docs: 6
+    search: 7
+    blog: 4
+    login: 3
   # `end` terminates the session. Each row must sum with its own `end` to
   # whatever you like; weights are relative.
   transitions:
-    home:   {plp: 31, pdp: 10, search: 8, blog: 3, end: 48}
-    plp:    {pdp: 38, plp: 5, home: 2, search: 3, end: 52}
-    pdp:    {pdp: 9, cart: 19, plp: 8, home: 2, end: 62}
-    search: {pdp: 34, plp: 7, search: 4, end: 55}
-    blog:   {home: 8, pdp: 7, plp: 4, end: 81}
-    cart:   {checkout: 56, pdp: 5, plp: 2, end: 37}
+    home:     {plp: 21, pdp: 9, pricing: 10, features: 5, docs: 2, blog: 1, search: 4, end: 48}
+    features: {pricing: 11, plp: 13, pdp: 10, features: 3, docs: 4, home: 1, search: 3, end: 55}
+    docs:     {docs: 6, features: 4, pricing: 6, plp: 5, pdp: 3, home: 2, blog: 1, search: 1, end: 72}
+    pricing:  {plp: 26, pdp: 17, features: 2, login: 3, home: 1, docs: 1, end: 50}
+    plp:      {pdp: 38, plp: 6, home: 2, search: 2, end: 52}
+    pdp:      {pdp: 9, cart: 19, plp: 8, home: 2, end: 62}
+    search:   {pdp: 25, plp: 12, docs: 3, features: 2, search: 2, blog: 1, end: 55}
+    blog:     {home: 4, pdp: 5, plp: 4, docs: 2, features: 3, search: 1, end: 81}
+    login:    {home: 4, pricing: 3, docs: 2, plp: 3, end: 88}
+    cart:     {checkout: 56, pdp: 5, plp: 2, end: 37}
     checkout: {purchased: 69, cart: 4, end: 27}
     purchased: {end: 100}
-  # Probability an add_to_cart fires while on a pdp.
+  # Probability an add_to_cart fires while on a pdp, before a session's
+  # conversion factor scales it (as it scales the funnel edges).
   add_to_cart_rate: 0.16
   # Probability a scroll event fires on a given page. GA4 sends it only when
   # the visitor reaches the bottom of the page, which most page views do not.

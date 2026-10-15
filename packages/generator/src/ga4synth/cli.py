@@ -35,7 +35,7 @@ from pathlib import Path
 from .generate import sorted_rows_for_shard
 from .invariants import run_all
 from .schema import validate_rows
-from .world import load_world
+from .world import load_world, scenario_paths
 
 SCHEMA_PATH = Path(__file__).resolve().parent / "data" / "events.json"
 
@@ -183,6 +183,19 @@ def cmd_summary(args) -> int:
         print(f"  conv. rate      {100 * identified / len(sessions):.2f}%")
     if purchases:
         print(f"  AOV             {revenue / len(purchases):,.2f} {world.currency}")
+    leads = [row for row in rows if row["event_name"] == "generate_lead"]
+    if leads:
+        lead_value = sum(
+            next((float(e["value"]["int_value"] if e["value"]["int_value"] is not None
+                        else e["value"]["double_value"])
+                  for e in row["event_params"] if e["key"] == "value"), 0.0)
+            for row in leads
+        )
+        identified = sum(1 for row in leads if row["user_pseudo_id"] is not None)
+        print(f"  leads           {len(leads):,}")
+        print(f"  lead value      {lead_value:,.2f} {world.currency}")
+        if sessions:
+            print(f"  lead rate       {100 * identified / len(sessions):.2f}%")
     print("\n  events by name")
     for name, count in events.most_common():
         print(f"    {name:<22} {count:>7,}")
@@ -309,6 +322,8 @@ def main(argv: list[str] | None = None) -> int:
     parser = argparse.ArgumentParser(prog="ga4synth", description=__doc__)
     parser.add_argument("--property", default=None, help="path to property.yaml")
     parser.add_argument("--mixer", default=None, help="path to mixer.yaml")
+    parser.add_argument("--scenario", default=None,
+                        help="a shipped scenario under config/scenarios, instead of --property and --mixer")
 
     def add_config(node):
         # argparse.SUPPRESS keeps the subparser from overwriting a path
@@ -317,6 +332,8 @@ def main(argv: list[str] | None = None) -> int:
                           help="path to property.yaml")
         node.add_argument("--mixer", default=argparse.SUPPRESS,
                           help="path to mixer.yaml")
+        node.add_argument("--scenario", default=argparse.SUPPRESS,
+                          help="a shipped scenario under config/scenarios, instead of --property and --mixer")
     sub = parser.add_subparsers(dest="command", required=True)
 
     for name, handler in (
@@ -359,6 +376,10 @@ def main(argv: list[str] | None = None) -> int:
 
     args = parser.parse_args(argv)
     try:
+        if args.scenario:
+            if args.property or args.mixer:
+                raise ValueError("--scenario replaces --property and --mixer; pass one or the other")
+            args.property, args.mixer = (str(path) for path in scenario_paths(args.scenario))
         return args.handler(args)
     except (FileNotFoundError, ValueError) as error:
         # Config problems are user errors, not crashes. A traceback here just

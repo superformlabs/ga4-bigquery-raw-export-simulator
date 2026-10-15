@@ -1,7 +1,12 @@
 // Types copied from docs/contracts/api.md. Keep them in step with that file.
 
-/** The two configurations of the generator (decision D-23, api.md v1.8). */
-export const DATASET_TYPES = ["default", "ecommerce"] as const;
+/**
+ * The four configurations of the generator (decisions D-23, D-96 and D-97,
+ * api.md v2.3). One word names the type, its folder in
+ * `packages/generator/config/` and its folder in the image. The names a
+ * visitor reads are in `TYPE_CHOICES` (lib/flow.ts).
+ */
+export const DATASET_TYPES = ["default", "ecommerce", "eu-consent", "lead-generation"] as const;
 export type DatasetType = (typeof DATASET_TYPES)[number];
 
 /**

@@ -1,14 +1,25 @@
 """GEN-3: two configurations, `ecommerce` and `default` (decision D-23).
 
-`ecommerce` is the generator's own configuration, unchanged (ORIGIN.md).
-`default` is the same company and the same site without its shop. It belongs
-to the app, and it is the ecommerce configuration with four changes:
+`ecommerce` is the app's own configuration of the website that sells its
+plans online (D-97). `default` is the same company and the same site without
+its shop. It belongs
+to the app, and it is the ecommerce configuration with five changes:
 
     property.yaml  ecommerce.enabled is false
                    pages has no pdp, cart, checkout or purchased
                    tracking.events has the nine events of a shop at false
+                   tracking.custom_events has no trial_start: it fires on
+                   the pdp, a page this site does not have
     mixer.yaml     journey.entry_weights and journey.transitions have no shop
                    page; what went to them is shared in proportion
+
+`config/` holds two more folders, `eu-consent` and `lead-generation`. The
+app offers those two as well, since issues #317, #318 and #316 of
+2026-10-14 (decision D-96): all four are a `datasetType`, and the image
+holds all four. The integration tests run the command line against
+`default` and `ecommerce` (`conftest.py`); the two others are exercised by
+the generator's own tests and, here, by the test that they load. Since D-97
+all four are the same invented website, GA4Dataform's own.
 
 The tests here read the files and the rows written by the command line. They
 assert no number of rows and no rate.
@@ -27,9 +38,11 @@ import yaml
 from conftest import (
     CONFIG_DIR,
     CONFIG_FILES,
+    CONFIG_FOLDERS,
     CONFIGURATIONS,
     DEFAULT,
     ECOMMERCE,
+    OUTSIDE_THE_PAIR,
     mixer_file,
     property_file,
 )
@@ -43,8 +56,12 @@ SHOP_EVENTS = {
     "begin_checkout", "add_shipping_info", "add_payment_info", "purchase",
 }
 
-# Weights of the default journey are written with one decimal.
-ROUNDING = 0.05
+# The custom event `default` drops with the shop pages: it fires on the pdp.
+SHOP_CUSTOM_EVENTS = {"trial_start"}
+
+# Weights of the default journey are written with two decimals, so that each
+# row of transitions adds up to 100 exactly.
+ROUNDING = 0.02
 
 
 def load(path: Path) -> dict:
@@ -96,13 +113,32 @@ def assert_same_weights(actual: dict[str, float], expected: dict[str, float], wh
 # ---------------------------------------------------------------------------
 
 
-def test_config_holds_the_two_folders_and_nothing_else() -> None:
-    """The image and the API name the folders `default` and `ecommerce`."""
+def test_config_holds_the_four_folders_and_nothing_else() -> None:
+    """Four folders, and the image and the API take all four.
+
+    Each folder name is a value of `datasetType` and a folder of the image
+    (decision D-96). `default` and `ecommerce` are the pair the rest of this
+    file compares, and the two the integration tests run (`conftest.py`),
+    which is what `CONFIGURATIONS` holds.
+    """
     found = sorted(path.name for path in CONFIG_DIR.iterdir())
-    assert found == sorted(CONFIGURATIONS)
-    for configuration in CONFIGURATIONS:
-        files = sorted(path.name for path in (CONFIG_DIR / configuration).iterdir())
-        assert files == sorted(CONFIG_FILES), configuration
+    assert found == sorted(CONFIG_FOLDERS)
+    assert sorted(CONFIGURATIONS) == [DEFAULT, ECOMMERCE]
+    for folder in CONFIG_FOLDERS:
+        files = sorted(path.name for path in (CONFIG_DIR / folder).iterdir())
+        assert files == sorted(CONFIG_FILES), folder
+
+
+@pytest.mark.parametrize("folder", OUTSIDE_THE_PAIR)
+def test_a_folder_outside_the_compared_pair_still_loads(folder: str) -> None:
+    """It has the two files and they parse.
+
+    `eu-consent` and `lead-generation` are offered by the app (D-96) and go
+    into the image, so a broken file would reach a visitor. The integration
+    tests do not run them, so this is where they are read.
+    """
+    assert load(property_file(folder))["property"]["hostname"]
+    assert load(mixer_file(folder))["journey"]["entry_weights"]
 
 
 def test_ecommerce_has_a_shop() -> None:
@@ -125,6 +161,8 @@ def test_default_has_the_shop_switched_off() -> None:
     events = config["tracking"]["events"]
     switched_on = sorted(name for name in SHOP_EVENTS if events.get(name) is not False)
     assert not switched_on, f"events of a shop not set to false: {switched_on}"
+    custom = {event["name"] for event in config["tracking"]["custom_events"] or []}
+    assert not custom & SHOP_CUSTOM_EVENTS, f"custom events of a shop: {custom}"
 
 
 def test_default_has_no_shop_page() -> None:
@@ -156,6 +194,10 @@ def test_default_property_differs_only_by_the_shop() -> None:
         name: False if name in SHOP_EVENTS else value
         for name, value in ecommerce["tracking"]["events"].items()
     }
+    expected["tracking"]["custom_events"] = [
+        event for event in ecommerce["tracking"]["custom_events"]
+        if event["name"] not in SHOP_CUSTOM_EVENTS
+    ]
     assert list(default) == list(ecommerce), "sections or their order differ"
     for section in ecommerce:
         assert default[section] == expected[section], section
@@ -214,7 +256,8 @@ def test_default_day_holds_no_event_of_a_shop(
 ) -> None:
     rows = rows_of(generated_shard(DEFAULT))
     assert rows
-    found = sorted({row["event_name"] for row in rows} & SHOP_EVENTS)
+    names = {row["event_name"] for row in rows}
+    found = sorted(names & (SHOP_EVENTS | SHOP_CUSTOM_EVENTS))
     assert not found, f"events of a shop in the default dataset: {found}"
 
 
@@ -252,6 +295,6 @@ def test_ecommerce_day_holds_the_events_of_a_shop(
 ) -> None:
     """The same reading finds them where they exist, so the checks above can fail."""
     rows = rows_of(generated_shard(ECOMMERCE))
-    assert SHOP_EVENTS <= {row["event_name"] for row in rows}
+    assert (SHOP_EVENTS | SHOP_CUSTOM_EVENTS) <= {row["event_name"] for row in rows}
     assert any(row["items"] for row in rows)
     assert any(row["ecommerce"]["transaction_id"] for row in rows)

@@ -42,15 +42,32 @@ export interface InstallSpec {
 }
 
 /**
- * The type of dataset (api.md v1.8, D-23). Each names one configuration of
- * the generator inside the image, `/app/config/<type>/`.
+ * The type of dataset (api.md v2.3, decisions D-96 and D-97; v1.8, D-23).
+ * Each names one configuration of the generator inside the image,
+ * `/app/config/<type>/`. The four are one invented software website seen
+ * from four angles (D-97).
  */
-export const DATASET_TYPES = ['default', 'ecommerce'] as const;
+export const DATASET_TYPES = ['default', 'ecommerce', 'eu-consent', 'lead-generation'] as const;
 export type DatasetType = (typeof DATASET_TYPES)[number];
 
 export function isDatasetType(s: string): s is DatasetType {
   return (DATASET_TYPES as readonly string[]).includes(s);
 }
+
+/**
+ * The name a visitor reads for each type (api.md v2.3). Every message that
+ * names a type uses this name, never the value. The one exception is the
+ * message of a malformed `datasetType`, which names the values of the field.
+ */
+export const DATASET_TYPE_NAMES: Readonly<Record<DatasetType, string>> = {
+  default: 'Default',
+  ecommerce: 'Ecommerce',
+  'eu-consent': 'EU consent',
+  'lead-generation': 'Lead generation',
+};
+
+/** The name a visitor reads for a type, for the text of a message (api.md v2.3). */
+export const typeName = (type: DatasetType): string => DATASET_TYPE_NAMES[type];
 
 export const INSTALL_DEFAULTS: Omit<InstallSpec, 'projectId'> = {
   datasetId: 'analytics_770000001',
@@ -699,7 +716,7 @@ export function jobTakenBy(job: JobInfo, spec: InstallSpec): string | null {
   }
   const type = typeFromArgs(job.spec.args);
   if (type === null) return 'it does not run a configuration of this installer';
-  if (type !== spec.datasetType) return `it makes data of type ${type}, not ${spec.datasetType}`;
+  if (type !== spec.datasetType) return `it makes data of type ${typeName(type)}, not ${typeName(spec.datasetType)}`;
   const dailyRefresh = dailyRefreshOf(job.spec);
   if (dailyRefresh !== spec.dailyRefresh) return dailyRefresh ? 'it was installed with the daily refresh, not without' : 'it was installed without the daily refresh, not with';
   return null;
@@ -737,11 +754,11 @@ function assertOwnedDataset(dataset: DatasetInfo, spec: InstallSpec): void {
 }
 
 export const otherTypeMessage = (spec: Pick<InstallSpec, 'projectId' | 'datasetId'>, type: DatasetType) =>
-  `Dataset ${spec.datasetId} in project ${spec.projectId} holds data of type ${type}.`;
+  `Dataset ${spec.datasetId} in project ${spec.projectId} holds data of type ${typeName(type)}.`;
 export const OTHER_TYPE_HINT = 'Start the install again to get another dataset name, or set another name in the Pro settings.';
 
 export const typeNotSetMessage = (spec: Pick<InstallSpec, 'projectId' | 'datasetId' | 'datasetType'>) =>
-  `Dataset ${spec.datasetId} in project ${spec.projectId} is not set to type ${spec.datasetType} yet.`;
+  `Dataset ${spec.datasetId} in project ${spec.projectId} is not set to type ${typeName(spec.datasetType)} yet.`;
 export const START_AGAIN_HINT = 'Start the install again. It creates what is missing and keeps what exists.';
 
 export const tablesNotSeenMessage = (spec: Pick<InstallSpec, 'projectId' | 'datasetId'>) =>

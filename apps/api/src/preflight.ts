@@ -28,6 +28,7 @@ import {
   requiredServices,
   scheduleIsOurs,
   scheduleTakenMessage,
+  typeName,
   wrongLocationHint,
   wrongLocationMessage,
   type CloudGateway,
@@ -267,7 +268,7 @@ export async function preflight(
     }
     // One type per dataset (api.md v1.11). A dataset set to the type of the request costs no call.
     const ours = `Dataset ${datasetId} already exists in ${dataset.location} and was created by this installer.`;
-    if (labelledType(dataset) === spec.datasetType) return { state: 'pass', message: `${ours} It is of type ${spec.datasetType}.` };
+    if (labelledType(dataset) === spec.datasetType) return { state: 'pass', message: `${ours} It is of type ${typeName(spec.datasetType)}.` };
     let tables;
     try {
       tables = await countEventsTables(cloud, token, spec);
@@ -285,8 +286,8 @@ export async function preflight(
     if (tables > 0 && type !== spec.datasetType) {
       return { state: 'fail', message: otherTypeMessage(spec, type!), hint: OTHER_TYPE_HINT, link: consoleLinks.bigquery(projectId) };
     }
-    if (tables === 0) return { state: 'pass', message: `${ours} It holds no table yet and takes the type ${spec.datasetType}.` };
-    return { state: 'pass', message: `${ours} It is of type ${spec.datasetType}.` };
+    if (tables === 0) return { state: 'pass', message: `${ours} It holds no table yet and takes the type ${typeName(spec.datasetType)}.` };
+    return { state: 'pass', message: `${ours} It is of type ${typeName(spec.datasetType)}.` };
   };
 
   const apisCheck = async (): Promise<Outcome> => {

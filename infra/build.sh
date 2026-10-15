@@ -15,17 +15,19 @@
 # project: nothing is shared between environments except the code (D-13).
 #
 # The generator is built from this repository (decision D-91): its code,
-# its Dockerfile and its two configurations all live in packages/generator/.
+# its Dockerfile and its four configurations all live in packages/generator/.
 # Nothing is cloned and nothing is downloaded. Before D-91 the code came from
 # one pinned commit of another repository; packages/generator/ORIGIN.md says
 # where that code came from.
 #
-# The image holds the app's two configurations (decision D-23), one per type
-# of dataset: /app/config/default/ and /app/config/ecommerce/, each with
-# property.yaml and mixer.yaml. A job names its configuration with the
-# generator's options --property and --mixer. The two environment variables
-# of the image name the ecommerce pair, as a fallback for the installs made
-# before the types existed, whose jobs name no configuration.
+# The image holds the app's four configurations (decisions D-23, D-96 and
+# D-97), one per type of dataset: /app/config/default/,
+# /app/config/ecommerce/, /app/config/eu-consent/ and
+# /app/config/lead-generation/, each with property.yaml and mixer.yaml. A job
+# names its configuration with the generator's options --property and
+# --mixer. The two environment variables of the image name the ecommerce
+# pair, as a fallback for the installs made before the types existed, whose
+# jobs name no configuration.
 #
 # THE TAG: "src-" and twelve characters.
 #
@@ -33,8 +35,9 @@
 #
 # The twelve characters are the start of a SHA-256 checksum of every file
 # that goes into the image, with its name: the Dockerfile, pyproject.toml,
-# README.md, LICENSE, every file of src/ga4synth/, and the four configuration
-# files. So the same files give the same tag on every machine, and a change
+# README.md, LICENSE, every file of src/ga4synth/, and the configuration
+# files of the four types, eight files. So the same files give the same tag
+# on every machine, and a change
 # to any one of them gives a new tag. An image that an install already uses
 # is therefore never replaced. The prefix "src-" keeps the new tags apart
 # from the old ones, which began with the commit of the other repository.
@@ -75,7 +78,7 @@ APP_CONFIG="${APP_CONFIG:-${GENERATOR_DIR}/config}"
 # --- What goes into the image ----------------------------------------------
 # The types of dataset, one folder each, as in docs/contracts/api.md
 # (`datasetType`) and infra/install.sh (DATASET_TYPE).
-CONFIG_TYPES=(default ecommerce)
+CONFIG_TYPES=(default ecommerce eu-consent lead-generation)
 CONFIG_FILES=(property.yaml mixer.yaml)
 # The type a job without --property and --mixer produces.
 FALLBACK_TYPE="ecommerce"
@@ -264,7 +267,8 @@ unset _found _wanted
 echo "--- Cloud Build -> ${IMAGE}:${TAG}"
 # Started without waiting and followed by its id, because the recipe keeps
 # its logs in Cloud Logging, which gcloud shows only once the build has
-# ended. About two minutes: the checks generate five days.
+# ended. About three minutes: the checks generate seven days, one per type
+# and three for the fallback.
 BUILD_ID="$(${SUBMIT} gcloud builds submit "${WORK}/src" \
   --config="${HERE}/cloudbuild-generator.yaml" \
   --substitutions="_IMAGE=${IMAGE}:${TAG},_CHECK_DATE=${CHECK_DATE}" \
